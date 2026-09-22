@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React from 'react';
 import {
@@ -10,50 +11,287 @@ import {
   View,
 } from 'react-native';
 
+import Chatbot from '../../components/Chatbot';
+import LiveTour from '../../components/LiveTour';
+
 import { useCart } from '../../context/CartContext';
 import { useWishlist } from '../../context/WishlistContext';
-import { products } from '../../data/products';
 
-const categories = ['All', 'Electronics', 'Fashion', 'Home'];
+// =========================================
+// BACKEND
+// =========================================
+
+const API_BASE_URL = 'http://3.110.90.184';
+
+// =========================================
+// CATEGORIES
+// =========================================
+
+const categories = [
+  'All',
+  'Electronics',
+  'Fashion',
+  'Home',
+];
+
+// =========================================
+// PRODUCT TYPE
+// =========================================
+
+type Product = {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  image: string;
+};
+
+// =========================================
+// HOME SCREEN
+// =========================================
 
 export default function HomeScreen() {
   const router = useRouter();
 
-  const { addToCart, cartCount } = useCart();
+  // =======================================
+  // CART
+  // =======================================
+
+  const {
+    addToCart,
+    cartCount,
+  } = useCart();
+
+  // =======================================
+  // WISHLIST
+  // =======================================
 
   const {
     toggleWishlist,
     isWishlisted,
   } = useWishlist();
 
-  const [search, setSearch] = React.useState('');
-  const [selectedCategory, setSelectedCategory] =
-    React.useState('All');
+  // =======================================
+  // SEARCH
+  // =======================================
 
-  const [productsOffset, setProductsOffset] =
-    React.useState(0);
+  const [search, setSearch] =
+    React.useState('');
+
+  const [
+    selectedCategory,
+    setSelectedCategory,
+  ] = React.useState('All');
+
+  // =======================================
+  // PRODUCTS
+  // =======================================
+
+  const [products, setProducts] =
+    React.useState<Product[]>([]);
+
+  const [loading, setLoading] =
+    React.useState(true);
+
+  const [error, setError] =
+    React.useState('');
+
+  // =======================================
+  // SCROLL
+  // =======================================
+
+  const [
+    productsOffset,
+    setProductsOffset,
+  ] = React.useState(0);
 
   const scrollRef =
     React.useRef<ScrollView>(null);
 
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.name
-      .toLowerCase()
-      .includes(search.toLowerCase());
+  // =======================================
+  // LIVE TOUR
+  // =======================================
 
-    const matchesCategory =
-      selectedCategory === 'All' ||
-      product.category.toLowerCase() ===
-        selectedCategory.toLowerCase();
+  const [showLiveTour, setShowLiveTour] =
+    React.useState(false);
 
-    return matchesSearch && matchesCategory;
-  });
+  // =======================================
+  // TOUR REFS
+  // =======================================
 
-  const isSearching = search.trim().length > 0;
+  const searchTourRef =
+    React.useRef<View>(null);
+
+  const wishlistTourRef =
+    React.useRef<View>(null);
+
+  const profileTourRef =
+    React.useRef<View>(null);
+
+  const cartTourRef =
+    React.useRef<View>(null);
+
+  // =======================================
+  // CHECK LIVE TOUR
+  // =======================================
+
+  React.useEffect(() => {
+    const checkLiveTour = async () => {
+      try {
+        const tourCompleted =
+          await AsyncStorage.getItem(
+            'customerLiveTourCompleted'
+          );
+
+        if (tourCompleted !== 'true') {
+          setShowLiveTour(true);
+        }
+      } catch (error) {
+        console.error(
+          'Live tour check error:',
+          error
+        );
+      }
+    };
+
+    checkLiveTour();
+  }, []);
+
+  // =======================================
+  // FETCH PRODUCTS
+  // =======================================
+
+  const fetchProducts = async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      console.log(
+        'Fetching products from:',
+        `${API_BASE_URL}/api/products`
+      );
+
+      const response = await fetch(
+        `${API_BASE_URL}/api/products`
+      );
+
+      const data =
+        await response.json();
+
+      console.log(
+        'Products response:',
+        data
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          data.message ||
+            'Failed to fetch products'
+        );
+      }
+
+      const backendProducts =
+        Array.isArray(data.products)
+          ? data.products
+          : [];
+
+      // ===================================
+      // CONVERT PRODUCTS
+      // ===================================
+
+      const formattedProducts =
+        backendProducts.map(
+          (product: any) => ({
+            id: String(product.id),
+
+            name: String(
+              product.name || ''
+            ),
+
+            category: String(
+              product.category || ''
+            ),
+
+            price: Number(
+              product.price || 0
+            ),
+
+            image: String(
+              product.image || ''
+            ),
+          })
+        );
+
+      setProducts(
+        formattedProducts
+      );
+    } catch (err) {
+      console.error(
+        'Products fetch error:',
+        err
+      );
+
+      setError(
+        'Unable to load products. Please try again.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // =======================================
+  // FETCH WHEN HOME OPENS
+  // =======================================
+
+  React.useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  // =======================================
+  // FILTER PRODUCTS
+  // =======================================
+
+  const filteredProducts =
+    products.filter((product) => {
+      const productName =
+        product.name.toLowerCase();
+
+      const productCategory =
+        product.category.toLowerCase();
+
+      const searchText =
+        search.toLowerCase();
+
+      const matchesSearch =
+        productName.includes(
+          searchText
+        );
+
+      const matchesCategory =
+        selectedCategory === 'All' ||
+        productCategory ===
+          selectedCategory.toLowerCase();
+
+      return (
+        matchesSearch &&
+        matchesCategory
+      );
+    });
+
+  // =======================================
+  // SEARCH
+  // =======================================
+
+  const isSearching =
+    search.trim().length > 0;
 
   const clearSearch = () => {
     setSearch('');
   };
+
+  // =======================================
+  // SHOP NOW
+  // =======================================
 
   const goToProducts = () => {
     scrollRef.current?.scrollTo({
@@ -62,304 +300,654 @@ export default function HomeScreen() {
     });
   };
 
+  // =======================================
+  // RETRY
+  // =======================================
+
+  const retryProducts = () => {
+    fetchProducts();
+  };
+
+  // =======================================
+  // UI
+  // =======================================
+
   return (
-    <ScrollView
-      ref={scrollRef}
-      style={styles.container}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* HEADER */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.logo}>
-            Shop
-            <Text style={styles.logoAccent}>
-              Ease
-            </Text>
-          </Text>
+    <View style={styles.root}>
 
-          <Text style={styles.tagline}>
-            Everything you need, all in one place
-          </Text>
-        </View>
+      <ScrollView
+        ref={scrollRef}
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+      >
 
-        <View style={styles.headerActions}>
+        {/* =================================
+            HEADER
+        ================================== */}
 
-          {/* WISHLIST */}
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() =>
-              router.push('/wishlist' as any)
-            }
-          >
-            <Text style={styles.headerIcon}>
-              ❤️
-            </Text>
-          </TouchableOpacity>
+        <View style={styles.header}>
 
-          {/* PROFILE */}
-          <TouchableOpacity
-            style={styles.headerButton}
-            onPress={() =>
-              router.push('/profile' as any)
-            }
-          >
-            <Text style={styles.headerIcon}>
-              👤
-            </Text>
-          </TouchableOpacity>
-
-          {/* CART */}
-          <TouchableOpacity
-            style={styles.cartButton}
-            onPress={() =>
-              router.push('/cart' as any)
-            }
-          >
-            <Text style={styles.cartIcon}>
-              🛒
-            </Text>
-
-            {cartCount > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>
-                  {cartCount}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-        </View>
-      </View>
-
-      {/* SEARCH */}
-      <View style={styles.searchContainer}>
-        <Text style={styles.searchIcon}>
-          🔍
-        </Text>
-
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search products..."
-          placeholderTextColor="#999"
-          style={styles.searchInput}
-        />
-
-        {/* CLEAR SEARCH */}
-        {isSearching && (
-          <TouchableOpacity
-            style={styles.clearButton}
-            onPress={clearSearch}
-          >
-            <Text style={styles.clearText}>
-              ✕
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* OFFER BANNER */}
-      {!isSearching && (
-        <View style={styles.banner}>
-          <View style={styles.bannerContent}>
-            <Text style={styles.offerText}>
-              SPECIAL OFFER
-            </Text>
-
-            <Text style={styles.bannerTitle}>
-              Shop your{'\n'}favorites
-            </Text>
-
-            <Text style={styles.bannerDescription}>
-              Discover great products at amazing prices.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.shopButton}
-              onPress={goToProducts}
-            >
-              <Text style={styles.shopButtonText}>
-                Shop Now
+          <View>
+            <Text style={styles.logo}>
+              Shop
+              <Text style={styles.logoAccent}>
+                Ease
               </Text>
-            </TouchableOpacity>
+            </Text>
+
+            <Text style={styles.tagline}>
+              Everything you need, all in one place
+            </Text>
           </View>
 
-          <Text style={styles.bannerEmoji}>
-            🛍️
-          </Text>
-        </View>
-      )}
+          <View
+            style={styles.headerActions}
+          >
 
-      {/* CATEGORIES */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          Shop by Category
-        </Text>
+            {/* WISHLIST */}
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.categoryList}
-        >
-          {categories.map((category) => {
-            const active =
-              selectedCategory === category;
-
-            return (
+            <View
+              ref={wishlistTourRef}
+              collapsable={false}
+            >
               <TouchableOpacity
-                key={category}
+                style={styles.headerButton}
                 onPress={() =>
-                  setSelectedCategory(category)
+                  router.push(
+                    '/wishlist' as any
+                  )
                 }
-                style={[
-                  styles.categoryButton,
-                  active &&
-                    styles.categoryButtonActive,
-                ]}
+                activeOpacity={0.7}
               >
                 <Text
-                  style={[
-                    styles.categoryText,
-                    active &&
-                      styles.categoryTextActive,
-                  ]}
+                  style={styles.headerIcon}
                 >
-                  {category}
+                  ❤️
                 </Text>
               </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+            </View>
 
-      {/* PRODUCTS HEADER */}
-      <View
-        style={styles.productsHeader}
-        onLayout={(event) => {
-          setProductsOffset(
-            event.nativeEvent.layout.y
-          );
-        }}
-      >
-        <Text style={styles.sectionTitle}>
-          Featured Products
-        </Text>
+            {/* PROFILE */}
 
-        <Text style={styles.itemCount}>
-          {filteredProducts.length} items
-        </Text>
-      </View>
+            <View
+              ref={profileTourRef}
+              collapsable={false}
+            >
+              <TouchableOpacity
+                style={styles.headerButton}
+                onPress={() =>
+                  router.push(
+                    '/profile' as any
+                  )
+                }
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={styles.headerIcon}
+                >
+                  👤
+                </Text>
+              </TouchableOpacity>
+            </View>
 
-      {/* PRODUCTS */}
-      <View style={styles.productGrid}>
-        {filteredProducts.map((product) => (
-          <TouchableOpacity
-            key={product.id}
-            style={styles.productCard}
-            activeOpacity={0.8}
-            onPress={() =>
-              router.push({
-                pathname: '/product/[id]',
-                params: {
-                  id: product.id,
-                },
-              })
+            {/* CART */}
+
+            <View
+              ref={cartTourRef}
+              collapsable={false}
+            >
+              <TouchableOpacity
+                style={styles.cartButton}
+                onPress={() =>
+                  router.push(
+                    '/cart' as any
+                  )
+                }
+                activeOpacity={0.7}
+              >
+                <Text
+                  style={styles.cartIcon}
+                >
+                  🛒
+                </Text>
+
+                {cartCount > 0 && (
+                  <View
+                    style={styles.cartBadge}
+                  >
+                    <Text
+                      style={
+                        styles.cartBadgeText
+                      }
+                    >
+                      {cartCount}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+
+        {/* =================================
+            SEARCH
+        ================================== */}
+
+        <View
+          ref={searchTourRef}
+          collapsable={false}
+          style={styles.searchContainer}
+        >
+          <Text
+            style={styles.searchIcon}
+          >
+            🔍
+          </Text>
+
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search products..."
+            placeholderTextColor="#999"
+            style={styles.searchInput}
+          />
+
+          {isSearching && (
+            <TouchableOpacity
+              style={styles.clearButton}
+              onPress={clearSearch}
+            >
+              <Text
+                style={styles.clearText}
+              >
+                ✕
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* =================================
+            OFFER BANNER
+        ================================== */}
+
+        {!isSearching && (
+          <View style={styles.banner}>
+
+            <View
+              style={styles.bannerContent}
+            >
+              <Text
+                style={styles.offerText}
+              >
+                SPECIAL OFFER
+              </Text>
+
+              <Text
+                style={styles.bannerTitle}
+              >
+                Shop your{'\n'}favorites
+              </Text>
+
+              <Text
+                style={
+                  styles.bannerDescription
+                }
+              >
+                Discover great products at amazing
+                prices.
+              </Text>
+
+              <TouchableOpacity
+                style={styles.shopButton}
+                onPress={goToProducts}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={
+                    styles.shopButtonText
+                  }
+                >
+                  Shop Now
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text
+              style={styles.bannerEmoji}
+            >
+              🛍️
+            </Text>
+
+          </View>
+        )}
+
+        {/* =================================
+            CATEGORIES
+        ================================== */}
+
+        <View style={styles.section}>
+
+          <Text
+            style={styles.sectionTitle}
+          >
+            Shop by Category
+          </Text>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={
+              false
+            }
+            contentContainerStyle={
+              styles.categoryList
             }
           >
-            {/* IMAGE */}
-            <View style={styles.imageContainer}>
-              <Image
-                source={{ uri: product.image }}
-                style={styles.productImage}
-              />
+            {categories.map(
+              (category) => {
+                const active =
+                  selectedCategory ===
+                  category;
 
-              {/* PRODUCT WISHLIST */}
+                return (
+                  <TouchableOpacity
+                    key={category}
+                    onPress={() =>
+                      setSelectedCategory(
+                        category
+                      )
+                    }
+                    style={[
+                      styles.categoryButton,
+                      active &&
+                        styles.categoryButtonActive,
+                    ]}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryText,
+                        active &&
+                          styles.categoryTextActive,
+                      ]}
+                    >
+                      {category}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }
+            )}
+          </ScrollView>
+        </View>
+
+        {/* =================================
+            PRODUCTS HEADER
+        ================================== */}
+
+        <View
+          style={styles.productsHeader}
+          onLayout={(event) => {
+            setProductsOffset(
+              event.nativeEvent.layout.y
+            );
+          }}
+        >
+          <Text
+            style={styles.sectionTitle}
+          >
+            Featured Products
+          </Text>
+
+          <Text
+            style={styles.itemCount}
+          >
+            {loading
+              ? 'Loading...'
+              : `${filteredProducts.length} items`}
+          </Text>
+        </View>
+
+        {/* =================================
+            LOADING
+        ================================== */}
+
+        {loading && (
+          <View
+            style={
+              styles.messageContainer
+            }
+          >
+            <Text
+              style={styles.messageIcon}
+            >
+              🛍️
+            </Text>
+
+            <Text
+              style={styles.loadingText}
+            >
+              Loading products...
+            </Text>
+          </View>
+        )}
+
+        {/* =================================
+            ERROR
+        ================================== */}
+
+        {!loading &&
+          error !== '' && (
+            <View
+              style={
+                styles.messageContainer
+              }
+            >
+              <Text
+                style={styles.messageIcon}
+              >
+                ⚠️
+              </Text>
+
+              <Text
+                style={styles.errorText}
+              >
+                {error}
+              </Text>
+
               <TouchableOpacity
-                style={styles.wishlistButton}
-                onPress={(event) => {
-                  event.stopPropagation();
-
-                  toggleWishlist({
-                    id: product.id,
-                    name: product.name,
-                    category: product.category,
-                    price: product.price,
-                    image: product.image,
-                  });
-                }}
+                style={
+                  styles.retryButton
+                }
+                onPress={retryProducts}
+                activeOpacity={0.8}
               >
                 <Text
-                  style={[
-                    styles.heart,
-                    isWishlisted(product.id) &&
-                      styles.heartActive,
-                  ]}
+                  style={
+                    styles.retryButtonText
+                  }
                 >
-                  {isWishlisted(product.id)
-                    ? '♥'
-                    : '♡'}
+                  Try Again
                 </Text>
               </TouchableOpacity>
             </View>
+          )}
 
-            {/* PRODUCT INFO */}
-            <View style={styles.productInfo}>
-              <Text style={styles.productCategory}>
-                {product.category}
+        {/* =================================
+            PRODUCTS
+        ================================== */}
+
+        {!loading &&
+          error === '' &&
+          filteredProducts.length > 0 && (
+            <View
+              style={styles.productGrid}
+            >
+              {filteredProducts.map(
+                (product) => (
+                  <TouchableOpacity
+                    key={product.id}
+                    style={
+                      styles.productCard
+                    }
+                    activeOpacity={0.8}
+                    onPress={() =>
+                      router.push({
+                        pathname:
+                          '/product/[id]',
+                        params: {
+                          id: product.id,
+                        },
+                      })
+                    }
+                  >
+
+                    {/* IMAGE */}
+
+                    <View
+                      style={
+                        styles.imageContainer
+                      }
+                    >
+                      <Image
+                        source={{
+                          uri:
+                            product.image,
+                        }}
+                        style={
+                          styles.productImage
+                        }
+                        resizeMode="cover"
+                      />
+
+                      {/* WISHLIST */}
+
+                      <TouchableOpacity
+                        style={
+                          styles.wishlistButton
+                        }
+                        onPress={(event) => {
+                          event.stopPropagation();
+
+                          toggleWishlist({
+                            id:
+                              product.id,
+
+                            name:
+                              product.name,
+
+                            category:
+                              product.category,
+
+                            price:
+                              product.price,
+
+                            image:
+                              product.image,
+                          });
+                        }}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.heart,
+                            isWishlisted(
+                              product.id
+                            ) &&
+                              styles.heartActive,
+                          ]}
+                        >
+                          {isWishlisted(
+                            product.id
+                          )
+                            ? '♥'
+                            : '♡'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* PRODUCT INFO */}
+
+                    <View
+                      style={
+                        styles.productInfo
+                      }
+                    >
+                      <Text
+                        style={
+                          styles.productCategory
+                        }
+                      >
+                        {product.category}
+                      </Text>
+
+                      <Text
+                        style={
+                          styles.productName
+                        }
+                        numberOfLines={2}
+                      >
+                        {product.name}
+                      </Text>
+
+                      <View
+                        style={
+                          styles.priceRow
+                        }
+                      >
+                        <Text
+                          style={styles.price}
+                        >
+                          ₹
+                          {product.price.toLocaleString(
+                            'en-IN'
+                          )}
+                        </Text>
+
+                        {/* ADD TO CART */}
+
+                        <TouchableOpacity
+                          style={
+                            styles.addButton
+                          }
+                          onPress={(event) => {
+                            event.stopPropagation();
+
+                            addToCart({
+                              id:
+                                product.id,
+
+                              name:
+                                product.name,
+
+                              category:
+                                product.category,
+
+                              price:
+                                product.price,
+
+                              image:
+                                product.image,
+                            });
+                          }}
+                          activeOpacity={0.8}
+                        >
+                          <Text
+                            style={
+                              styles.addButtonText
+                            }
+                          >
+                            +
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                )
+              )}
+            </View>
+          )}
+
+        {/* =================================
+            NO RESULTS
+        ================================== */}
+
+        {!loading &&
+          error === '' &&
+          filteredProducts.length === 0 && (
+            <View
+              style={
+                styles.emptyContainer
+              }
+            >
+              <Text
+                style={styles.emptyIcon}
+              >
+                🔍
               </Text>
 
-              <Text style={styles.productName}>
-                {product.name}
+              <Text
+                style={styles.emptyText}
+              >
+                No products found
               </Text>
 
-              <View style={styles.priceRow}>
-                <Text style={styles.price}>
-                  ₹
-                  {product.price.toLocaleString(
-                    'en-IN'
-                  )}
-                </Text>
-
+              {search.trim() !== '' && (
                 <TouchableOpacity
-                  style={styles.addButton}
-                  onPress={(event) => {
-                    event.stopPropagation();
-
-                    addToCart({
-                      id: product.id,
-                      name: product.name,
-                      category: product.category,
-                      price: product.price,
-                      image: product.image,
-                    });
-                  }}
+                  onPress={clearSearch}
+                  style={
+                    styles.clearSearchButton
+                  }
+                  activeOpacity={0.8}
                 >
-                  <Text style={styles.addButtonText}>
-                    +
+                  <Text
+                    style={
+                      styles.clearSearchButtonText
+                    }
+                  >
+                    Clear Search
                   </Text>
                 </TouchableOpacity>
-              </View>
+              )}
             </View>
-          </TouchableOpacity>
-        ))}
-      </View>
+          )}
 
-      {/* NO RESULTS */}
-      {filteredProducts.length === 0 && (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
-            No products found
-          </Text>
-        </View>
+        <View
+          style={{ height: 100 }}
+        />
+
+      </ScrollView>
+
+      {/* =================================
+          CHATBOT
+      ================================== */}
+
+      <Chatbot />
+
+      {/* =================================
+          LIVE TOUR
+      ================================== */}
+
+      {showLiveTour && (
+        <LiveTour
+          role="customer"
+          targets={{
+            'tour-search':
+              searchTourRef,
+
+            'tour-profile':
+              profileTourRef,
+
+            'tour-wishlist':
+              wishlistTourRef,
+
+            'tour-cart':
+              cartTourRef,
+          }}
+          onFinish={async () => {
+            setShowLiveTour(false);
+
+            await AsyncStorage.setItem(
+              'customerLiveTourCompleted',
+              'true'
+            );
+          }}
+        />
       )}
 
-      <View style={{ height: 40 }} />
-    </ScrollView>
+    </View>
   );
 }
 
+// =========================================
+// STYLES
+// =========================================
+
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#f8f8f8',
+  },
+
   container: {
     flex: 1,
     backgroundColor: '#f8f8f8',
@@ -397,7 +985,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
 
-  /* WISHLIST + PROFILE */
   headerButton: {
     width: 44,
     height: 44,
@@ -424,6 +1011,25 @@ const styles = StyleSheet.create({
 
   cartIcon: {
     fontSize: 22,
+  },
+
+  cartBadge: {
+    position: 'absolute',
+    right: -2,
+    top: -2,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#7c3aed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+
+  cartBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
   },
 
   searchContainer: {
@@ -671,32 +1277,73 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
 
+  messageContainer: {
+    minHeight: 220,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 30,
+  },
+
+  messageIcon: {
+    fontSize: 42,
+    marginBottom: 12,
+  },
+
+  loadingText: {
+    fontSize: 15,
+    color: '#777',
+    fontWeight: '600',
+  },
+
+  errorText: {
+    fontSize: 14,
+    color: '#b42318',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 15,
+  },
+
+  retryButton: {
+    backgroundColor: '#7c3aed',
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: 9,
+  },
+
+  retryButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+
   emptyContainer: {
     padding: 30,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  emptyIcon: {
+    fontSize: 36,
+    marginBottom: 10,
   },
 
   emptyText: {
     color: '#777',
     fontSize: 15,
+    textAlign: 'center',
   },
 
-  cartBadge: {
-    position: 'absolute',
-    right: -2,
-    top: -2,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
+  clearSearchButton: {
+    marginTop: 14,
     backgroundColor: '#7c3aed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
   },
 
-  cartBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '800',
+  clearSearchButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

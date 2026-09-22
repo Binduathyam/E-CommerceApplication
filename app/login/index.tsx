@@ -15,6 +15,8 @@ import {
 
 import { API_BASE_URL } from '../../config/api';
 
+type LoginType = 'customer' | 'merchant' | 'delivery';
+
 export default function LoginScreen() {
   const router = useRouter();
 
@@ -23,6 +25,9 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] =
     React.useState(false);
   const [loading, setLoading] = React.useState(false);
+
+  const [loginType, setLoginType] =
+    React.useState<LoginType>('customer');
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
@@ -44,30 +49,54 @@ export default function LoginScreen() {
     try {
       setLoading(true);
 
+      const loginUrl =
+        loginType === 'delivery'
+          ? `${API_BASE_URL}/api/delivery/login`
+          : `${API_BASE_URL}/api/auth/login`;
+
+      console.log('LOGIN TYPE:', loginType);
+      console.log('LOGIN URL:', loginUrl);
       console.log(
-        'Login API:',
-        `${API_BASE_URL}/api/auth/login`
+        'LOGIN EMAIL:',
+        email.trim().toLowerCase()
       );
 
+      const requestBody =
+        loginType === 'delivery'
+          ? {
+              email: email.trim().toLowerCase(),
+              password,
+            }
+          : {
+              email: email.trim().toLowerCase(),
+              password,
+              role: loginType,
+            };
+
       const response = await fetch(
-        `${API_BASE_URL}/api/auth/login`,
+        loginUrl,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            email: email.trim().toLowerCase(),
-            password,
-          }),
+          body: JSON.stringify(requestBody),
         }
       );
 
       const data = await response.json();
 
-      console.log('Login response:', data);
+      console.log(
+        'Login response:',
+        data
+      );
 
-      if (!response.ok) {
+      console.log(
+        'USER ROLE:',
+        data.user?.role
+      );
+
+      if (!response.ok || !data.success) {
         Alert.alert(
           'Login Failed',
           data.message ||
@@ -76,7 +105,17 @@ export default function LoginScreen() {
         return;
       }
 
-      // Save logged-in user
+      if (data.token) {
+        await AsyncStorage.setItem(
+          'authToken',
+          data.token
+        );
+
+        console.log(
+          'JWT token saved successfully'
+        );
+      }
+
       await AsyncStorage.setItem(
         'loggedInUser',
         JSON.stringify(data.user)
@@ -87,6 +126,11 @@ export default function LoginScreen() {
         data.user
       );
 
+      await AsyncStorage.setItem(
+        'userRole',
+        data.user.role
+      );
+
       Alert.alert(
         'Login Successful',
         `Welcome ${data.user.name}`,
@@ -94,7 +138,38 @@ export default function LoginScreen() {
           {
             text: 'Continue',
             onPress: () => {
-              router.replace('/(tabs)');
+              console.log(
+                'LOGIN ROLE:',
+                data.user.role
+              );
+
+              if (
+                data.user.role ===
+                'customer'
+              ) {
+                router.replace(
+                  '/(tabs)'
+                );
+              } else if (
+                data.user.role ===
+                'merchant'
+              ) {
+                router.replace(
+                  '/merchant'
+                );
+              } else if (
+                data.user.role ===
+                'delivery'
+              ) {
+                router.replace(
+                  '/delivery'
+                );
+              } else {
+                Alert.alert(
+                  'Login Error',
+                  'Unknown user role received from server.'
+                );
+              }
             },
           },
         ]
@@ -120,41 +195,161 @@ export default function LoginScreen() {
       behavior={
         Platform.OS === 'ios'
           ? 'padding'
-          : undefined
+          : 'height'
+      }
+      keyboardVerticalOffset={
+        Platform.OS === 'ios'
+          ? 0
+          : 20
       }
     >
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={
+          styles.content
+        }
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
       >
+
         {/* LOGO */}
 
-        <View style={styles.logoContainer}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoText}>
+        <View
+          style={styles.logoContainer}
+        >
+          <View
+            style={styles.logoCircle}
+          >
+            <Text
+              style={styles.logoText}
+            >
               S
             </Text>
           </View>
 
-          <Text style={styles.brandName}>
+          <Text
+            style={styles.brandName}
+          >
             ShopEase
           </Text>
         </View>
 
+        {/* LOGIN TYPE */}
+
+        <View
+          style={
+            styles.loginTypeContainer
+          }
+        >
+
+          {/* CUSTOMER */}
+
+          <TouchableOpacity
+            style={[
+              styles.loginTypeButton,
+              loginType ===
+                'customer' &&
+                styles.activeLoginType,
+            ]}
+            onPress={() =>
+              setLoginType(
+                'customer'
+              )
+            }
+          >
+            <Text
+              style={[
+                styles.loginTypeText,
+                loginType ===
+                  'customer' &&
+                  styles.activeLoginTypeText,
+              ]}
+            >
+              Customer
+            </Text>
+          </TouchableOpacity>
+
+          {/* MERCHANT */}
+
+          <TouchableOpacity
+            style={[
+              styles.loginTypeButton,
+              loginType ===
+                'merchant' &&
+                styles.activeLoginType,
+            ]}
+            onPress={() =>
+              setLoginType(
+                'merchant'
+              )
+            }
+          >
+            <Text
+              style={[
+                styles.loginTypeText,
+                loginType ===
+                  'merchant' &&
+                  styles.activeLoginTypeText,
+              ]}
+            >
+              Merchant
+            </Text>
+          </TouchableOpacity>
+
+          {/* DELIVERY */}
+
+          <TouchableOpacity
+            style={[
+              styles.loginTypeButton,
+              loginType ===
+                'delivery' &&
+                styles.activeLoginType,
+            ]}
+            onPress={() =>
+              setLoginType(
+                'delivery'
+              )
+            }
+          >
+            <Text
+              style={[
+                styles.loginTypeText,
+                loginType ===
+                  'delivery' &&
+                  styles.activeLoginTypeText,
+              ]}
+            >
+              Delivery
+            </Text>
+          </TouchableOpacity>
+
+        </View>
+
         {/* TITLE */}
 
-        <Text style={styles.title}>
+        <Text
+          style={styles.title}
+        >
           Welcome Back
         </Text>
 
-        <Text style={styles.subtitle}>
-          Login to continue shopping with ShopEase
+        <Text
+          style={styles.subtitle}
+        >
+          {loginType ===
+          'merchant'
+            ? 'Login to manage your products and orders'
+            : loginType ===
+              'delivery'
+            ? 'Login to manage your deliveries'
+            : 'Login to continue shopping'}
         </Text>
 
         {/* EMAIL */}
 
-        <Text style={styles.label}>
+        <Text
+          style={styles.label}
+        >
           Email Address
         </Text>
 
@@ -171,28 +366,42 @@ export default function LoginScreen() {
 
         {/* PASSWORD */}
 
-        <Text style={styles.label}>
+        <Text
+          style={styles.label}
+        >
           Password
         </Text>
 
-        <View style={styles.passwordContainer}>
+        <View
+          style={
+            styles.passwordContainer
+          }
+        >
           <TextInput
-            style={styles.passwordInput}
+            style={
+              styles.passwordInput
+            }
             placeholder="Enter your password"
             placeholderTextColor="#999"
             value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
+            onChangeText={
+              setPassword
+            }
+            secureTextEntry={
+              !showPassword
+            }
           />
 
           <TouchableOpacity
             onPress={() =>
               setShowPassword(
-                (value) => !value
+                value => !value
               )
             }
           >
-            <Text style={styles.showText}>
+            <Text
+              style={styles.showText}
+            >
               {showPassword
                 ? 'Hide'
                 : 'Show'}
@@ -203,7 +412,9 @@ export default function LoginScreen() {
         {/* FORGOT PASSWORD */}
 
         <TouchableOpacity
-          style={styles.forgotButton}
+          style={
+            styles.forgotButton
+          }
           onPress={() =>
             Alert.alert(
               'Forgot Password',
@@ -211,12 +422,14 @@ export default function LoginScreen() {
             )
           }
         >
-          <Text style={styles.forgotText}>
+          <Text
+            style={styles.forgotText}
+          >
             Forgot Password?
           </Text>
         </TouchableOpacity>
 
-        {/* LOGIN */}
+        {/* LOGIN BUTTON */}
 
         <TouchableOpacity
           style={[
@@ -224,35 +437,86 @@ export default function LoginScreen() {
             loading &&
               styles.loginButtonDisabled,
           ]}
-          onPress={handleLogin}
+          onPress={
+            handleLogin
+          }
           disabled={loading}
         >
-          <Text style={styles.loginButtonText}>
+          <Text
+            style={
+              styles.loginButtonText
+            }
+          >
             {loading
               ? 'Logging in...'
-              : 'Login'}
+              : loginType ===
+                'merchant'
+              ? 'Merchant Login'
+              : loginType ===
+                'delivery'
+              ? 'Delivery Partner Login'
+              : 'Customer Login'}
           </Text>
         </TouchableOpacity>
 
         {/* REGISTER */}
 
-        <View style={styles.registerRow}>
-          <Text style={styles.registerText}>
-            Don't have an account?
+        <View
+          style={styles.registerRow}
+        >
+          <Text
+            style={
+              styles.registerText
+            }
+          >
+            {loginType ===
+            'merchant'
+              ? 'Want to sell products?'
+              : loginType ===
+                'delivery'
+              ? 'Want to deliver orders?'
+              : "Don't have an account?"}
           </Text>
 
           <TouchableOpacity
-            onPress={() =>
-              router.push(
-                '/register' as any
-              )
-            }
+            onPress={() => {
+              if (
+                loginType ===
+                'merchant'
+              ) {
+                router.push(
+                  '/merchant/register'
+                );
+              } else if (
+                loginType ===
+                'delivery'
+              ) {
+                router.push(
+                  '/delivery/register'
+                );
+              } else {
+                router.push(
+                  '/register'
+                );
+              }
+            }}
           >
-            <Text style={styles.registerLink}>
-              {' '}Create Account
+            <Text
+              style={
+                styles.registerLink
+              }
+            >
+              {loginType ===
+              'merchant'
+                ? ' Register as Merchant'
+                : loginType ===
+                  'delivery'
+                ? ' Register as Delivery Partner'
+                : ' Create Account'}
             </Text>
           </TouchableOpacity>
         </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -267,9 +531,8 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     paddingHorizontal: 22,
-    paddingTop: 70,
-    paddingBottom: 40,
-    justifyContent: 'center',
+    paddingTop: 50,
+    paddingBottom: 60,
   },
 
   logoContainer: {
@@ -389,6 +652,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 22,
+    flexWrap: 'wrap',
   },
 
   registerText: {
@@ -400,5 +664,56 @@ const styles = StyleSheet.create({
     color: '#7c3aed',
     fontSize: 14,
     fontWeight: '800',
+  },
+
+  loginTypeContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#eeeeee',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 25,
+  },
+
+  loginTypeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 9,
+    alignItems: 'center',
+  },
+
+  activeLoginType: {
+    backgroundColor: '#7c3aed',
+  },
+
+  loginTypeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#666',
+  },
+
+  activeLoginTypeText: {
+    color: '#ffffff',
+  },
+
+  merchantButton: {
+    height: 54,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#7c3aed',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+
+  merchantButtonText: {
+    color: '#7c3aed',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+
+  merchantRegisterRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 15,
   },
 });

@@ -30,9 +30,44 @@ export default function RegisterScreen() {
   const [showConfirmPassword, setShowConfirmPassword] =
     React.useState(false);
 
-  const [loading, setLoading] = React.useState(false);
+  const [loading, setLoading] =
+    React.useState(false);
+
+  // =========================================
+  // PASSWORD VALIDATION
+  // =========================================
+
+  const hasCapitalLetter =
+    /[A-Z]/.test(password);
+
+  const hasSmallLetter =
+    /[a-z]/.test(password);
+
+  const hasNumber =
+    /[0-9]/.test(password);
+
+  const hasSymbol =
+    /[^A-Za-z0-9]/.test(password);
+
+  const hasMinimumLength =
+    password.length >= 6;
+
+  const isStrongPassword =
+    hasCapitalLetter &&
+    hasSmallLetter &&
+    hasNumber &&
+    hasSymbol &&
+    hasMinimumLength;
+
+  // =========================================
+  // REGISTER
+  // =========================================
 
   const handleRegister = async () => {
+    // =======================================
+    // CHECK EMPTY FIELDS
+    // =======================================
+
     if (
       !name.trim() ||
       !email.trim() ||
@@ -47,13 +82,28 @@ export default function RegisterScreen() {
       return;
     }
 
-    if (!email.includes('@')) {
+    // =======================================
+    // EMAIL VALIDATION
+    // =======================================
+
+    const emailRegex =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (
+      !emailRegex.test(
+        email.trim()
+      )
+    ) {
       Alert.alert(
         'Invalid Email',
         'Please enter a valid email address'
       );
       return;
     }
+
+    // =======================================
+    // PHONE VALIDATION
+    // =======================================
 
     if (phone.length !== 10) {
       Alert.alert(
@@ -63,15 +113,57 @@ export default function RegisterScreen() {
       return;
     }
 
-    if (password.length < 6) {
+    // =======================================
+    // PASSWORD VALIDATION
+    // =======================================
+
+    if (!hasMinimumLength) {
       Alert.alert(
         'Invalid Password',
-        'Password must contain at least 6 characters'
+        'Password must contain at least 6 characters.'
       );
       return;
     }
 
-    if (password !== confirmPassword) {
+    if (!hasCapitalLetter) {
+      Alert.alert(
+        'Invalid Password',
+        'Password must contain at least one capital letter (A-Z).'
+      );
+      return;
+    }
+
+    if (!hasSmallLetter) {
+      Alert.alert(
+        'Invalid Password',
+        'Password must contain at least one small letter (a-z).'
+      );
+      return;
+    }
+
+    if (!hasNumber) {
+      Alert.alert(
+        'Invalid Password',
+        'Password must contain at least one number (0-9).'
+      );
+      return;
+    }
+
+    if (!hasSymbol) {
+      Alert.alert(
+        'Invalid Password',
+        'Password must contain at least one symbol such as ! @ # $ % & *.'
+      );
+      return;
+    }
+
+    // =======================================
+    // CONFIRM PASSWORD
+    // =======================================
+
+    if (
+      password !== confirmPassword
+    ) {
       Alert.alert(
         'Password Error',
         'Passwords do not match'
@@ -82,40 +174,60 @@ export default function RegisterScreen() {
     try {
       setLoading(true);
 
-      // TEMPORARY CONNECTION TEST
-      console.log('API URL:', API_BASE_URL);
+      // =====================================
+      // CONNECTION TEST
+      // =====================================
 
-      const testResponse = await fetch(
-        `${API_BASE_URL}/`
+      console.log(
+        'API URL:',
+        API_BASE_URL
       );
 
-      const testData = await testResponse.text();
+      const testResponse =
+        await fetch(
+          `${API_BASE_URL}/`
+        );
+
+      const testData =
+        await testResponse.text();
 
       console.log(
         'Backend test:',
         testData
       );
 
-      // REAL REGISTRATION REQUEST
-      const response = await fetch(
-        `${API_BASE_URL}/api/auth/register`,
-        {
-          method: 'POST',
+      // =====================================
+      // REGISTRATION REQUEST
+      // =====================================
 
-          headers: {
-            'Content-Type': 'application/json',
-          },
+      const response =
+        await fetch(
+          `${API_BASE_URL}/api/auth/register`,
+          {
+            method: 'POST',
 
-          body: JSON.stringify({
-            name: name.trim(),
-            email: email.trim().toLowerCase(),
-            phone: phone.trim(),
-            password,
-          }),
-        }
-      );
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
 
-      const data = await response.json();
+            body: JSON.stringify({
+              name: name.trim(),
+              email: email
+                .trim()
+                .toLowerCase(),
+              phone: phone.trim(),
+              password,
+            }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      // =====================================
+      // BACKEND ERROR
+      // =====================================
 
       if (!response.ok) {
         Alert.alert(
@@ -125,6 +237,10 @@ export default function RegisterScreen() {
         );
         return;
       }
+
+      // =====================================
+      // SUCCESS
+      // =====================================
 
       Alert.alert(
         'Success',
@@ -139,7 +255,6 @@ export default function RegisterScreen() {
           },
         ]
       );
-
     } catch (error) {
       console.error(
         'Register error:',
@@ -150,11 +265,14 @@ export default function RegisterScreen() {
         'Connection Error',
         'Unable to connect to the server. Please try again.'
       );
-
     } finally {
       setLoading(false);
     }
   };
+
+  // =========================================
+  // UI
+  // =========================================
 
   return (
     <KeyboardAvoidingView
@@ -162,41 +280,82 @@ export default function RegisterScreen() {
       behavior={
         Platform.OS === 'ios'
           ? 'padding'
-          : undefined
+          : 'height'
+      }
+      keyboardVerticalOffset={
+        Platform.OS === 'ios'
+          ? 0
+          : 20
       }
     >
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={
+          styles.content
+        }
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={
+          false
+        }
       >
-        {/* LOGO */}
 
-        <View style={styles.logoContainer}>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoText}>
+        {/* ===================================
+            LOGO
+        ==================================== */}
+
+        <View
+          style={
+            styles.logoContainer
+          }
+        >
+          <View
+            style={
+              styles.logoCircle
+            }
+          >
+            <Text
+              style={
+                styles.logoText
+              }
+            >
               S
             </Text>
           </View>
 
-          <Text style={styles.brandName}>
+          <Text
+            style={
+              styles.brandName
+            }
+          >
             ShopEase
           </Text>
         </View>
 
-        {/* TITLE */}
+        {/* ===================================
+            TITLE
+        ==================================== */}
 
-        <Text style={styles.title}>
+        <Text
+          style={styles.title}
+        >
           Create Account
         </Text>
 
-        <Text style={styles.subtitle}>
+        <Text
+          style={
+            styles.subtitle
+          }
+        >
           Sign up to start shopping with ShopEase
         </Text>
 
-        {/* NAME */}
+        {/* ===================================
+            NAME
+        ==================================== */}
 
-        <Text style={styles.label}>
+        <Text
+          style={styles.label}
+        >
           Full Name
         </Text>
 
@@ -209,9 +368,13 @@ export default function RegisterScreen() {
           autoCapitalize="words"
         />
 
-        {/* EMAIL */}
+        {/* ===================================
+            EMAIL
+        ==================================== */}
 
-        <Text style={styles.label}>
+        <Text
+          style={styles.label}
+        >
           Email Address
         </Text>
 
@@ -226,9 +389,13 @@ export default function RegisterScreen() {
           autoCorrect={false}
         />
 
-        {/* PHONE */}
+        {/* ===================================
+            PHONE
+        ==================================== */}
 
-        <Text style={styles.label}>
+        <Text
+          style={styles.label}
+        >
           Phone Number
         </Text>
 
@@ -249,9 +416,13 @@ export default function RegisterScreen() {
           maxLength={10}
         />
 
-        {/* PASSWORD */}
+        {/* ===================================
+            PASSWORD
+        ==================================== */}
 
-        <Text style={styles.label}>
+        <Text
+          style={styles.label}
+        >
           Password
         </Text>
 
@@ -261,14 +432,20 @@ export default function RegisterScreen() {
           }
         >
           <TextInput
-            style={styles.passwordInput}
+            style={
+              styles.passwordInput
+            }
             placeholder="Create a password"
             placeholderTextColor="#999"
             value={password}
-            onChangeText={setPassword}
+            onChangeText={
+              setPassword
+            }
             secureTextEntry={
               !showPassword
             }
+            autoCapitalize="none"
+            autoCorrect={false}
           />
 
           <TouchableOpacity
@@ -278,7 +455,11 @@ export default function RegisterScreen() {
               )
             }
           >
-            <Text style={styles.showText}>
+            <Text
+              style={
+                styles.showText
+              }
+            >
               {showPassword
                 ? 'Hide'
                 : 'Show'}
@@ -286,9 +467,90 @@ export default function RegisterScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* CONFIRM PASSWORD */}
+        {/* ===================================
+            PASSWORD REQUIREMENTS
+        ==================================== */}
 
-        <Text style={styles.label}>
+        {password.length > 0 && (
+          <View
+            style={
+              styles.requirementsContainer
+            }
+          >
+            <Text
+              style={[
+                styles.requirementText,
+                hasMinimumLength &&
+                  styles.requirementValid,
+              ]}
+            >
+              {hasMinimumLength
+                ? '✓'
+                : '○'}{' '}
+              At least 6 characters
+            </Text>
+
+            <Text
+              style={[
+                styles.requirementText,
+                hasCapitalLetter &&
+                  styles.requirementValid,
+              ]}
+            >
+              {hasCapitalLetter
+                ? '✓'
+                : '○'}{' '}
+              One capital letter (A-Z)
+            </Text>
+
+            <Text
+              style={[
+                styles.requirementText,
+                hasSmallLetter &&
+                  styles.requirementValid,
+              ]}
+            >
+              {hasSmallLetter
+                ? '✓'
+                : '○'}{' '}
+              One small letter (a-z)
+            </Text>
+
+            <Text
+              style={[
+                styles.requirementText,
+                hasNumber &&
+                  styles.requirementValid,
+              ]}
+            >
+              {hasNumber
+                ? '✓'
+                : '○'}{' '}
+              One number (0-9)
+            </Text>
+
+            <Text
+              style={[
+                styles.requirementText,
+                hasSymbol &&
+                  styles.requirementValid,
+              ]}
+            >
+              {hasSymbol
+                ? '✓'
+                : '○'}{' '}
+              One symbol (! @ # $ % & *)
+            </Text>
+          </View>
+        )}
+
+        {/* ===================================
+            CONFIRM PASSWORD
+        ==================================== */}
+
+        <Text
+          style={styles.label}
+        >
           Confirm Password
         </Text>
 
@@ -298,7 +560,9 @@ export default function RegisterScreen() {
           }
         >
           <TextInput
-            style={styles.passwordInput}
+            style={
+              styles.passwordInput
+            }
             placeholder="Confirm your password"
             placeholderTextColor="#999"
             value={confirmPassword}
@@ -308,6 +572,8 @@ export default function RegisterScreen() {
             secureTextEntry={
               !showConfirmPassword
             }
+            autoCapitalize="none"
+            autoCorrect={false}
           />
 
           <TouchableOpacity
@@ -317,7 +583,11 @@ export default function RegisterScreen() {
               )
             }
           >
-            <Text style={styles.showText}>
+            <Text
+              style={
+                styles.showText
+              }
+            >
               {showConfirmPassword
                 ? 'Hide'
                 : 'Show'}
@@ -325,7 +595,9 @@ export default function RegisterScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* REGISTER */}
+        {/* ===================================
+            REGISTER BUTTON
+        ==================================== */}
 
         <TouchableOpacity
           style={[
@@ -333,8 +605,11 @@ export default function RegisterScreen() {
             loading &&
               styles.registerButtonDisabled,
           ]}
-          onPress={handleRegister}
+          onPress={
+            handleRegister
+          }
           disabled={loading}
+          activeOpacity={0.8}
         >
           <Text
             style={
@@ -347,10 +622,16 @@ export default function RegisterScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* LOGIN */}
+        {/* ===================================
+            LOGIN
+        ==================================== */}
 
-        <View style={styles.loginRow}>
-          <Text style={styles.loginText}>
+        <View
+          style={styles.loginRow}
+        >
+          <Text
+            style={styles.loginText}
+          >
             Already have an account?
           </Text>
 
@@ -362,16 +643,23 @@ export default function RegisterScreen() {
             }
           >
             <Text
-              style={styles.loginLink}
+              style={
+                styles.loginLink
+              }
             >
               {' '}Login
             </Text>
           </TouchableOpacity>
         </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
+
+// =========================================
+// STYLES
+// =========================================
 
 const styles = StyleSheet.create({
   container: {
@@ -380,9 +668,10 @@ const styles = StyleSheet.create({
   },
 
   content: {
+    flexGrow: 1,
     paddingHorizontal: 22,
-    paddingTop: 55,
-    paddingBottom: 40,
+    paddingTop: 50,
+    paddingBottom: 80,
   },
 
   logoContainer: {
@@ -468,6 +757,34 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  // =======================================
+  // PASSWORD REQUIREMENTS
+  // =======================================
+
+  requirementsContainer: {
+    marginTop: 10,
+    padding: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#eeeeee',
+  },
+
+  requirementText: {
+    fontSize: 12,
+    color: '#777',
+    marginBottom: 5,
+  },
+
+  requirementValid: {
+    color: '#16a34a',
+    fontWeight: '700',
+  },
+
+  // =======================================
+  // REGISTER BUTTON
+  // =======================================
+
   registerButton: {
     height: 54,
     borderRadius: 12,
@@ -487,10 +804,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  // =======================================
+  // LOGIN
+  // =======================================
+
   loginRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 20,
+    paddingBottom: 20,
   },
 
   loginText: {

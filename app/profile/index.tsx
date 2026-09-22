@@ -10,6 +10,8 @@ import {
   View,
 } from 'react-native';
 
+import { useCart } from '../../context/CartContext';
+
 type User = {
   id: number;
   name: string;
@@ -20,11 +22,26 @@ type User = {
 export default function ProfileScreen() {
   const router = useRouter();
 
+  // =====================================================
+  // CART
+  // =====================================================
+
+  const { clearLocalCart } =
+    useCart();
+
+  // =====================================================
+  // USER STATE
+  // =====================================================
+
   const [user, setUser] =
     React.useState<User | null>(null);
 
   const [loading, setLoading] =
     React.useState(true);
+
+  // =====================================================
+  // LOAD USER
+  // =====================================================
 
   const loadUser = async () => {
     try {
@@ -38,6 +55,8 @@ export default function ProfileScreen() {
           JSON.parse(savedUser);
 
         setUser(parsedUser);
+      } else {
+        setUser(null);
       }
     } catch (error) {
       console.error(
@@ -49,9 +68,17 @@ export default function ProfileScreen() {
     }
   };
 
+  // =====================================================
+  // LOAD USER WHEN SCREEN OPENS
+  // =====================================================
+
   React.useEffect(() => {
     loadUser();
   }, []);
+
+  // =====================================================
+  // LOGOUT
+  // =====================================================
 
   const handleLogout = () => {
     Alert.alert(
@@ -62,22 +89,61 @@ export default function ProfileScreen() {
           text: 'Cancel',
           style: 'cancel',
         },
+
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: async () => {
-            await AsyncStorage.removeItem(
-              'loggedInUser'
-            );
 
-            router.replace(
-              '/login' as any
-            );
+          onPress: async () => {
+            try {
+              // -----------------------------------------
+              // CLEAR LOCAL CART ONLY
+              // -----------------------------------------
+              //
+              // IMPORTANT:
+              // This does NOT delete cart from MySQL.
+              //
+              // When the same user logs in again,
+              // their cart will be loaded from backend.
+              // -----------------------------------------
+
+              clearLocalCart();
+
+              // -----------------------------------------
+              // REMOVE CURRENT LOGIN
+              // -----------------------------------------
+
+              await AsyncStorage.removeItem(
+                'loggedInUser'
+              );
+
+              // -----------------------------------------
+              // GO TO LOGIN
+              // -----------------------------------------
+
+              router.replace(
+                '/login' as any
+              );
+            } catch (error) {
+              console.error(
+                'Logout error:',
+                error
+              );
+
+              Alert.alert(
+                'Logout Error',
+                'Unable to logout. Please try again.'
+              );
+            }
           },
         },
       ]
     );
   };
+
+  // =====================================================
+  // DISPLAY DATA
+  // =====================================================
 
   const displayName =
     user?.name || 'User';
@@ -95,6 +161,10 @@ export default function ProfileScreen() {
       .charAt(0)
       .toUpperCase();
 
+  // =====================================================
+  // UI
+  // =====================================================
+
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -102,49 +172,77 @@ export default function ProfileScreen() {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() => router.back()}
+          onPress={() =>
+            router.back()
+          }
         >
           <Text style={styles.backText}>
             ‹
           </Text>
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>
+        <Text
+          style={styles.headerTitle}
+        >
           My Profile
         </Text>
 
-        <View style={{ width: 42 }} />
+        <View
+          style={{
+            width: 42,
+          }}
+        />
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={
+          styles.content
+        }
+        showsVerticalScrollIndicator={
+          false
+        }
       >
-        {/* PROFILE */}
+        {/* =================================================
+            PROFILE
+            ================================================= */}
 
-        <View style={styles.profileCard}>
+        <View
+          style={styles.profileCard}
+        >
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
+            <Text
+              style={
+                styles.avatarText
+              }
+            >
               {loading
                 ? '...'
                 : avatarLetter}
             </Text>
           </View>
 
-          <View style={styles.profileInfo}>
-            <Text style={styles.name}>
+          <View
+            style={styles.profileInfo}
+          >
+            <Text
+              style={styles.name}
+            >
               {loading
                 ? 'Loading...'
                 : displayName}
             </Text>
 
-            <Text style={styles.email}>
+            <Text
+              style={styles.email}
+            >
               {loading
                 ? ''
                 : displayEmail}
             </Text>
 
-            <Text style={styles.phone}>
+            <Text
+              style={styles.phone}
+            >
               {loading
                 ? ''
                 : displayPhone}
@@ -152,13 +250,19 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* ACCOUNT */}
+        {/* =================================================
+            ACCOUNT
+            ================================================= */}
 
-        <Text style={styles.sectionTitle}>
+        <Text
+          style={styles.sectionTitle}
+        >
           Account
         </Text>
 
         <View style={styles.menuCard}>
+          {/* MY ORDERS */}
+
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() =>
@@ -167,30 +271,44 @@ export default function ProfileScreen() {
               )
             }
           >
-            <View style={styles.iconBox}>
+            <View
+              style={styles.iconBox}
+            >
               <Text style={styles.icon}>
                 📦
               </Text>
             </View>
 
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
                 My Orders
               </Text>
 
               <Text
-                style={styles.menuSubtitle}
+                style={
+                  styles.menuSubtitle
+                }
               >
                 View your orders and status
               </Text>
             </View>
 
-            <Text style={styles.arrow}>
+            <Text
+              style={styles.arrow}
+            >
               ›
             </Text>
           </TouchableOpacity>
 
-          <View style={styles.divider} />
+          <View
+            style={styles.divider}
+          />
+
+          {/* WISHLIST */}
 
           <TouchableOpacity
             style={styles.menuItem}
@@ -200,156 +318,175 @@ export default function ProfileScreen() {
               )
             }
           >
-            <View style={styles.iconBox}>
+            <View
+              style={styles.iconBox}
+            >
               <Text style={styles.icon}>
                 ❤️
               </Text>
             </View>
 
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
                 Wishlist
               </Text>
 
               <Text
-                style={styles.menuSubtitle}
+                style={
+                  styles.menuSubtitle
+                }
               >
                 View your saved products
               </Text>
             </View>
 
-            <Text style={styles.arrow}>
+            <Text
+              style={styles.arrow}
+            >
               ›
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* DELIVERY */}
+        {/* =================================================
+            DELIVERY
+            ================================================= */}
 
-        <Text style={styles.sectionTitle}>
+        <Text
+          style={styles.sectionTitle}
+        >
           Delivery
         </Text>
 
         <View style={styles.menuCard}>
+          {/* MY ADDRESSES */}
+
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() =>
-              Alert.alert(
-                'Address',
-                'Address management will be connected with the backend.'
+              router.push(
+                '/address' as any
               )
             }
           >
-            <View style={styles.iconBox}>
+            <View
+              style={styles.iconBox}
+            >
               <Text style={styles.icon}>
                 📍
               </Text>
             </View>
 
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
                 My Addresses
               </Text>
 
               <Text
-                style={styles.menuSubtitle}
+                style={
+                  styles.menuSubtitle
+                }
               >
-                Manage delivery addresses
+                View addresses used in your orders
               </Text>
             </View>
 
-            <Text style={styles.arrow}>
+            <Text
+              style={styles.arrow}
+            >
               ›
             </Text>
           </TouchableOpacity>
         </View>
 
-        {/* SETTINGS */}
+        {/* =================================================
+            SETTINGS
+            ================================================= */}
 
-        <Text style={styles.sectionTitle}>
+        <Text
+          style={styles.sectionTitle}
+        >
           Settings
         </Text>
 
         <View style={styles.menuCard}>
+          {/* SETTINGS */}
+
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() =>
-              Alert.alert(
-                'Settings',
-                'Settings will be added later.'
-              )
-            }
+  router.push(
+    "/account-settings" as any
+  )
+}
           >
-            <View style={styles.iconBox}>
+            <View
+              style={styles.iconBox}
+            >
               <Text style={styles.icon}>
                 ⚙️
               </Text>
             </View>
 
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
                 Settings
               </Text>
 
               <Text
-                style={styles.menuSubtitle}
+                style={
+                  styles.menuSubtitle
+                }
               >
                 App preferences and settings
               </Text>
             </View>
 
-            <Text style={styles.arrow}>
+            <Text
+              style={styles.arrow}
+            >
               ›
             </Text>
           </TouchableOpacity>
 
-          <View style={styles.divider} />
+          <View
+            style={styles.divider}
+          />
 
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() =>
-              Alert.alert(
-                'Help & Support',
-                'Support will be connected later.'
-              )
-            }
-          >
-            <View style={styles.iconBox}>
-              <Text style={styles.icon}>
-                ❓
-              </Text>
-            </View>
-
-            <View style={styles.menuInfo}>
-              <Text style={styles.menuTitle}>
-                Help & Support
-              </Text>
-
-              <Text
-                style={styles.menuSubtitle}
-              >
-                Get help with your orders
-              </Text>
-            </View>
-
-            <Text style={styles.arrow}>
-              ›
-            </Text>
-          </TouchableOpacity>
         </View>
 
-        {/* LOGOUT */}
+        {/* =================================================
+            LOGOUT
+            ================================================= */}
 
         <TouchableOpacity
-          style={styles.logoutButton}
+          style={
+            styles.logoutButton
+          }
           onPress={handleLogout}
         >
-          <Text style={styles.logoutText}>
+          <Text
+            style={styles.logoutText}
+          >
             Logout
           </Text>
         </TouchableOpacity>
 
-        <Text style={styles.version}>
+        <Text
+          style={styles.version}
+        >
           ShopEase v1.0.0
         </Text>
       </ScrollView>
@@ -357,176 +494,181 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8f8f8',
-  },
+// =====================================================
+// STYLES
+// =====================================================
 
-  header: {
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 15,
-    backgroundColor: '#ffffff',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+const styles =
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: '#f8f8f8',
+    },
 
-  backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#f2f2f2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+    header: {
+      paddingTop: 50,
+      paddingHorizontal: 16,
+      paddingBottom: 15,
+      backgroundColor: '#ffffff',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
 
-  backText: {
-    fontSize: 32,
-    color: '#222',
-    marginTop: -4,
-  },
+    backButton: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: '#f2f2f2',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  headerTitle: {
-    fontSize: 19,
-    fontWeight: '800',
-    color: '#181818',
-  },
+    backText: {
+      fontSize: 32,
+      color: '#222',
+      marginTop: -4,
+    },
 
-  content: {
-    padding: 14,
-    paddingBottom: 40,
-  },
+    headerTitle: {
+      fontSize: 19,
+      fontWeight: '800',
+      color: '#181818',
+    },
 
-  profileCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+    content: {
+      padding: 14,
+      paddingBottom: 40,
+    },
 
-  avatar: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: '#7c3aed',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+    profileCard: {
+      backgroundColor: '#ffffff',
+      borderRadius: 16,
+      padding: 18,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
 
-  avatarText: {
-    color: '#ffffff',
-    fontSize: 28,
-    fontWeight: '900',
-  },
+    avatar: {
+      width: 70,
+      height: 70,
+      borderRadius: 35,
+      backgroundColor: '#7c3aed',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
 
-  profileInfo: {
-    marginLeft: 15,
-    flex: 1,
-  },
+    avatarText: {
+      color: '#ffffff',
+      fontSize: 28,
+      fontWeight: '900',
+    },
 
-  name: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: '#181818',
-  },
+    profileInfo: {
+      marginLeft: 15,
+      flex: 1,
+    },
 
-  email: {
-    marginTop: 5,
-    fontSize: 13,
-    color: '#666',
-  },
+    name: {
+      fontSize: 20,
+      fontWeight: '800',
+      color: '#181818',
+    },
 
-  phone: {
-    marginTop: 3,
-    fontSize: 13,
-    color: '#777',
-  },
+    email: {
+      marginTop: 5,
+      fontSize: 13,
+      color: '#666',
+    },
 
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#333',
-    marginTop: 22,
-    marginBottom: 9,
-    marginLeft: 3,
-  },
+    phone: {
+      marginTop: 3,
+      fontSize: 13,
+      color: '#777',
+    },
 
-  menuCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 15,
-    paddingHorizontal: 14,
-  },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: '#333',
+      marginTop: 22,
+      marginBottom: 9,
+      marginLeft: 3,
+    },
 
-  menuItem: {
-    minHeight: 72,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+    menuCard: {
+      backgroundColor: '#ffffff',
+      borderRadius: 15,
+      paddingHorizontal: 14,
+    },
 
-  iconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 11,
-    backgroundColor: '#f3f0ff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+    menuItem: {
+      minHeight: 72,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
 
-  icon: {
-    fontSize: 20,
-  },
+    iconBox: {
+      width: 42,
+      height: 42,
+      borderRadius: 11,
+      backgroundColor: '#f3f0ff',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
 
-  menuInfo: {
-    flex: 1,
-    marginLeft: 13,
-  },
+    icon: {
+      fontSize: 20,
+    },
 
-  menuTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#222',
-  },
+    menuInfo: {
+      flex: 1,
+      marginLeft: 13,
+    },
 
-  menuSubtitle: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 3,
-  },
+    menuTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: '#222',
+    },
 
-  arrow: {
-    fontSize: 27,
-    color: '#aaa',
-    marginLeft: 8,
-  },
+    menuSubtitle: {
+      fontSize: 12,
+      color: '#888',
+      marginTop: 3,
+    },
 
-  divider: {
-    height: 1,
-    backgroundColor: '#eeeeee',
-  },
+    arrow: {
+      fontSize: 27,
+      color: '#aaa',
+      marginLeft: 8,
+    },
 
-  logoutButton: {
-    height: 52,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#ef4444',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 25,
-  },
+    divider: {
+      height: 1,
+      backgroundColor: '#eeeeee',
+    },
 
-  logoutText: {
-    color: '#ef4444',
-    fontSize: 15,
-    fontWeight: '800',
-  },
+    logoutButton: {
+      height: 52,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: '#ef4444',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginTop: 25,
+    },
 
-  version: {
-    textAlign: 'center',
-    color: '#aaa',
-    fontSize: 12,
-    marginTop: 18,
-  },
-});
+    logoutText: {
+      color: '#ef4444',
+      fontSize: 15,
+      fontWeight: '800',
+    },
+
+    version: {
+      textAlign: 'center',
+      color: '#aaa',
+      fontSize: 12,
+      marginTop: 18,
+    },
+  });
