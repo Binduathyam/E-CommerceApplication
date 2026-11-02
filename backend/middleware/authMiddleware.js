@@ -306,7 +306,10 @@ function requireRole(...allowedRoles) {
       });
     }
 
+console.log("ROLE PASSED - CALLING NEXT");
     next();
+
+
   };
 }
 

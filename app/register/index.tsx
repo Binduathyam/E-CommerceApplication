@@ -14,6 +14,13 @@ import {
 
 import { API_BASE_URL } from '../../config/api';
 
+const SECURITY_QUESTIONS = [
+  'What was the name of your first school?',
+  'What was the name of your first pet?',
+  'What is your childhood nickname?',
+  'What is your favourite food?',
+];
+
 export default function RegisterScreen() {
   const router = useRouter();
 
@@ -23,6 +30,15 @@ export default function RegisterScreen() {
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] =
     React.useState('');
+
+  const [securityQuestion, setSecurityQuestion] =
+    React.useState('');
+
+  const [securityAnswer, setSecurityAnswer] =
+    React.useState('');
+
+  const [showQuestionList, setShowQuestionList] =
+    React.useState(false);
 
   const [showPassword, setShowPassword] =
     React.useState(false);
@@ -73,7 +89,9 @@ export default function RegisterScreen() {
       !email.trim() ||
       !phone.trim() ||
       !password ||
-      !confirmPassword
+      !confirmPassword ||
+      !securityQuestion ||
+      !securityAnswer.trim()
     ) {
       Alert.alert(
         'Missing Details',
@@ -171,6 +189,26 @@ export default function RegisterScreen() {
       return;
     }
 
+    // =======================================
+    // SECURITY ANSWER
+    // =======================================
+
+    if (!securityQuestion) {
+      Alert.alert(
+        'Security Question',
+        'Please select a security question'
+      );
+      return;
+    }
+
+    if (!securityAnswer.trim()) {
+      Alert.alert(
+        'Security Answer',
+        'Please enter your security answer'
+      );
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -213,17 +251,31 @@ export default function RegisterScreen() {
 
             body: JSON.stringify({
               name: name.trim(),
+
               email: email
                 .trim()
                 .toLowerCase(),
+
               phone: phone.trim(),
+
               password,
+
+              security_question:
+                securityQuestion,
+
+              security_answer:
+                securityAnswer.trim(),
             }),
           }
         );
 
       const data =
         await response.json();
+
+      console.log(
+        'Registration response:',
+        data
+      );
 
       // =====================================
       // BACKEND ERROR
@@ -596,6 +648,102 @@ export default function RegisterScreen() {
         </View>
 
         {/* ===================================
+            SECURITY QUESTION
+        ==================================== */}
+
+        <Text
+          style={styles.label}
+        >
+          Security Question
+        </Text>
+
+        <TouchableOpacity
+          style={styles.select}
+          onPress={() =>
+            setShowQuestionList(
+              value => !value
+            )
+          }
+        >
+          <Text
+            style={
+              securityQuestion
+                ? styles.selectText
+                : styles.placeholderText
+            }
+          >
+            {securityQuestion ||
+              'Select a security question'}
+          </Text>
+
+          <Text
+            style={styles.arrow}
+          >
+            {showQuestionList
+              ? '▲'
+              : '▼'}
+          </Text>
+        </TouchableOpacity>
+
+        {showQuestionList && (
+          <View
+            style={
+              styles.questionList
+            }
+          >
+            {SECURITY_QUESTIONS.map(
+              question => (
+                <TouchableOpacity
+                  key={question}
+                  style={
+                    styles.questionItem
+                  }
+                  onPress={() => {
+                    setSecurityQuestion(
+                      question
+                    );
+
+                    setShowQuestionList(
+                      false
+                    );
+                  }}
+                >
+                  <Text
+                    style={
+                      styles.questionText
+                    }
+                  >
+                    {question}
+                  </Text>
+                </TouchableOpacity>
+              )
+            )}
+          </View>
+        )}
+
+        {/* ===================================
+            SECURITY ANSWER
+        ==================================== */}
+
+        <Text
+          style={styles.label}
+        >
+          Security Answer
+        </Text>
+
+        <TextInput
+          style={styles.input}
+          placeholder="Enter your security answer"
+          placeholderTextColor="#999"
+          value={securityAnswer}
+          onChangeText={
+            setSecurityAnswer
+          }
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+
+        {/* ===================================
             REGISTER BUTTON
         ==================================== */}
 
@@ -782,6 +930,62 @@ const styles = StyleSheet.create({
   },
 
   // =======================================
+  // SECURITY QUESTION
+  // =======================================
+
+  select: {
+    minHeight: 52,
+    borderWidth: 1,
+    borderColor: '#dddddd',
+    borderRadius: 11,
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  selectText: {
+    flex: 1,
+    color: '#222',
+    fontSize: 14,
+  },
+
+  placeholderText: {
+    flex: 1,
+    color: '#999',
+    fontSize: 14,
+  },
+
+  arrow: {
+    color: '#7c3aed',
+    fontSize: 12,
+    marginLeft: 10,
+  },
+
+  questionList: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#dddddd',
+    borderRadius: 11,
+    backgroundColor: '#ffffff',
+    overflow: 'hidden',
+  },
+
+  questionItem: {
+    paddingHorizontal: 15,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eeeeee',
+  },
+
+  questionText: {
+    color: '#333',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  // =======================================
   // REGISTER BUTTON
   // =======================================
 
@@ -813,6 +1017,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 20,
     paddingBottom: 20,
+    flexWrap: 'wrap',
   },
 
   loginText: {

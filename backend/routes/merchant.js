@@ -498,7 +498,7 @@ router.get(
                      o.payment_method,
                      ''
                    )
-                 ) IN (
+  ) IN (
                    'cod',
                    'cash on delivery'
                  )

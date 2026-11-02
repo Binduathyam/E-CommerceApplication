@@ -20,6 +20,9 @@ import {
 
 import LiveTour from "../../components/LiveTour";
 import { API_BASE_URL } from "../../config/api";
+import useExitOnBack from "../../hooks/useExitOnBack";
+
+
 
 type Product = {
   id: number;
@@ -51,6 +54,8 @@ type Order = {
 
 export default function MerchantDashboard() {
   const router = useRouter();
+
+useExitOnBack();
 
   const [products, setProducts] =
     useState<Product[]>([]);

@@ -1,11 +1,55 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const path = require("path");
+
 
 const db = require("../db");
+const { requireAuth, requireRole } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+
+const deliveryStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/delivery-documents");
+  },
+
+  filename: (req, file, cb) => {
+    const uniqueName =
+      Date.now() +
+      "-" +
+      Math.round(Math.random() * 1e9) +
+      path.extname(file.originalname);
+
+    cb(null, uniqueName);
+  },
+});
+
+const uploadDeliveryDocument = multer({
+  storage: deliveryStorage,
+
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+
+  fileFilter: (req, file, cb) => {
+    if (
+      file.mimetype === "image/jpeg" ||
+      file.mimetype === "image/png" ||
+      file.mimetype === "image/jpg"
+    ) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Only JPG, JPEG and PNG images are allowed."
+        )
+      );
+    }
+  },
+});
 
 /* =================================
    DELIVERY PARTNER LOGIN
@@ -114,27 +158,31 @@ router.post(
 
       }
 
+
+     /* =========================
+   CHECK ADMIN APPROVAL
+========================= */
+
+if (
+  deliveryPartner.approval_status !==
+  "Approved"
+) {
+
+  return res.status(403).json({
+    success: false,
+    message:
+      deliveryPartner.approval_status === "Rejected"
+        ? "Your delivery partner account has been rejected by the admin."
+        : "Your delivery partner account is pending admin approval."
+  });
+
+}
+
       /* =================================
          MAKE PARTNER ONLINE
       ================================= */
 
-      connection =
-        await db.getConnection();
-
-      await connection.beginTransaction();
-
-      await connection.query(
-        `
-        UPDATE delivery_partners
-        SET availability_status = 'Online'
-        WHERE id = ?
-        `,
-        [deliveryPartner.id]
-      );
-
-    
-
-      await connection.commit();
+      
 
       /* =========================
          CREATE JWT TOKEN
@@ -188,8 +236,7 @@ router.post(
             "delivery",
 
           availability_status:
-            "Online"
-
+  deliveryPartner.availability_status
         }
 
       });
@@ -451,7 +498,7 @@ const assignWaitingOrder = async (
           "New Order Assigned",
           `A new order #${order.id} has been assigned to you`
         ]
-      );
+ );
 
       console.log(
         `Order #${order.id} assigned to delivery partner #${deliveryPartnerId}`
@@ -487,40 +534,41 @@ router.get(
 
 router.post(
   "/register",
+uploadDeliveryDocument.single("license"),
   async (req, res) => {
 
     try {
 
-      const {
-        name,
-        email,
-        phone,
-        password,
-        address,
-        city,
-        state,
-        vehicle_type,
-        vehicle_number,
-        license_number
-      } = req.body;
-
+     const {
+  name,
+  email,
+  phone,
+  password,
+  address,
+  city,
+  state,
+  vehicle_type,
+  vehicle_number,
+  license_number,
+  security_question,
+  security_answer
+} = req.body;
 
       if (
-        !name ||
-        !email ||
-        !phone ||
-        !password
-      ) {
-
-        return res.status(400).json({
-          success: false,
-          message:
-            "Name, email, phone and password are required"
-        });
-
-      }
-
-
+  !name ||
+  !email ||
+  !phone ||
+  !password ||
+  !security_question ||
+  !security_answer ||
+  !req.file
+) {
+  return res.status(400).json({
+    success: false,
+    message:
+      "Name, email, phone, password, security question, security answer and Driving Licence are required"
+  });
+}
       const normalizedEmail =
         email
           .trim()
@@ -573,11 +621,15 @@ router.post(
             vehicle_type,
             vehicle_number,
             license_number,
+            license_image,
+           security_question,
+            security_answer,
             status,
+            approval_status,
             availability_status
           )
           VALUES
-          (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'Offline')
+(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'Pending', 'Offline')
           `,
           [
             name.trim(),
@@ -589,7 +641,12 @@ router.post(
             state?.trim() || null,
             vehicle_type?.trim() || null,
             vehicle_number?.trim() || null,
-            license_number?.trim() || null
+            license_number?.trim() || null,
+req.file
+  ? `/uploads/delivery-documents/${req.file.filename}`
+  : null,
+security_question,
+            security_answer.trim()
           ]
         );
 
@@ -1031,7 +1088,9 @@ router.get(
         LIMIT 1
         `,
         [delivery_partner_id]
-      );if (partners.length === 0) {
+      );
+
+      if (partners.length === 0) {
         return res.status(404).json({
           success: false,
           message: "Delivery partner not found"
@@ -1053,7 +1112,7 @@ router.get(
           o.total_amount,
           o.payment_method,
           o.payment_status,
-          o.order_status, 
+          o.order_status,
           o.delivery_status,
           o.return_status,
           o.return_reason,
@@ -1083,7 +1142,7 @@ router.get(
           ON o.address_id = a.id
 
         WHERE
-        (
+          (
             o.delivery_partner_id = ?
           )
           OR
@@ -1111,7 +1170,7 @@ router.get(
       );
 
       res.json({
-         success: true,
+        success: true,
         count: orders.length,
         delivery_partner_city:
           deliveryPartner.city,
@@ -1133,13 +1192,13 @@ router.get(
     }
   }
 );
-
+    
 /* =================================
    GET ACTIVE ORDERS
 ================================= */
 
 router.get(
-  "/active-orders/:delivery_partner_id",
+ "/active-orders/:delivery_partner_id",
   async (req, res) => {
 
     try {
@@ -1939,7 +1998,7 @@ router.put(
             AND delivery_partner_id = ?
           `,
           [
-            order_id,
+ order_id,
             delivery_partner_id
           ]
         );
@@ -2392,8 +2451,8 @@ router.put(
         phone,
         address,
         city,
-        state,
-        vehicle_type,
+       state,
+         vehicle_type,
         vehicle_number,
         license_number
       } = req.body;
@@ -2420,7 +2479,7 @@ router.put(
             phone?.trim() || null,
             address?.trim() || null,
             city?.trim() || null,
-            state?.trim() || null,
+             state?.trim() || null,
             vehicle_type?.trim() || null,
             vehicle_number?.trim() || null,
             license_number?.trim() || null,
@@ -2638,8 +2697,7 @@ router.post(
         Do not use Number(null),
         because Number(null) = 0
       */
-
-      if (
+ if (
         shippingAddress?.latitude ===
           undefined ||
         shippingAddress?.latitude ===
@@ -3439,7 +3497,7 @@ router.get(
 
       console.error(
         "Today summary error:",
-        error
+ error
       );
 
       res.status(500).json({
@@ -3851,6 +3909,1040 @@ router.put(
 
   }
 );
+
+
+/* =====================================================
+   SHIPMENT PICKUP APIs
+   These routes are separate from legacy order delivery.
+===================================================== */
+
+// GET /api/delivery/shipments/available-pickups
+router.get(
+  "/shipments/available-pickups",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    try {
+      const partnerId = Number(req.user.id);
+
+      const [partners] = await db.query(
+        `SELECT id, city, state, status, approval_status,
+                availability_status
+         FROM delivery_partners
+         WHERE id = ?
+         LIMIT 1`,
+        [partnerId]
+      );
+
+      if (partners.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Delivery partner not found"
+        });
+      }
+
+      const partner = partners[0];
+
+      if (
+        partner.status !== "active" ||
+        partner.approval_status !== "Approved"
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Your delivery partner account is not active and approved"
+        });
+      }
+
+      if (partner.availability_status !== "Online") {
+        return res.status(409).json({
+          success: false,
+          message: "Set your availability to Online to view pickup assignments"
+        });
+      }
+
+      if (!partner.city || !partner.state) {
+        return res.status(400).json({
+          success: false,
+          message: "Your delivery partner city and state must be configured"
+        });
+      }
+
+      const [shipments] = await db.query(
+        `SELECT
+           ms.id AS shipment_id,
+           ms.order_id,
+           ms.merchant_id,
+           ms.tracking_number,
+           ms.pickup_address,
+           ms.pickup_city,
+           ms.pickup_state,
+           ms.pickup_pincode,
+           ms.shipment_status,
+           ms.ready_at,
+           h.hub_name AS origin_hub_name
+         FROM merchant_shipments ms
+         LEFT JOIN dispatch_hubs h ON h.id = ms.origin_hub_id
+         WHERE ms.shipment_status = 'Ready for Pickup'
+           AND ms.pickup_partner_id IS NULL
+           AND LOWER(TRIM(ms.pickup_city)) = LOWER(TRIM(?))
+           AND LOWER(TRIM(ms.pickup_state)) = LOWER(TRIM(?))
+         ORDER BY ms.ready_at ASC, ms.id ASC`,
+        [partner.city, partner.state]
+      );
+
+      return res.json({
+        success: true,
+        count: shipments.length,
+        shipments
+      });
+    } catch (error) {
+      console.error("Available shipment pickups error:", error);
+ return res.status(500).json({
+        success: false,
+        message: "Failed to retrieve available pickup shipments"
+      });
+    }
+  }
+);
+
+
+// POST /api/delivery/shipments/:shipmentId/accept-pickup
+router.post(
+  "/shipments/:shipmentId/accept-pickup",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    let connection;
+    let transactionStarted = false;
+
+    try {
+      const shipmentId = Number(req.params.shipmentId);
+      const partnerId = Number(req.user.id);
+
+      if (
+        !Number.isSafeInteger(shipmentId) || shipmentId <= 0 ||
+        !Number.isSafeInteger(partnerId) || partnerId <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shipment or delivery partner ID"
+        });
+      }
+
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [partners] = await connection.query(
+        `SELECT id, city, state, status, approval_status,
+                availability_status
+         FROM delivery_partners
+         WHERE id = ?
+         FOR UPDATE`,
+        [partnerId]
+      );
+
+      if (partners.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({
+          success: false,
+          message: "Delivery partner not found"
+        });
+      }
+
+      const partner = partners[0];
+
+      if (
+        partner.status !== "active" ||
+        partner.approval_status !== "Approved"
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(403).json({
+          success: false,
+          message: "Your delivery partner account is not active and approved"
+        });
+      }
+
+      if (partner.availability_status !== "Online") {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: "You must be Online and available to accept a pickup"
+        });
+      }
+
+      const [shipments] = await connection.query(
+        `SELECT id, order_id, merchant_id, tracking_number,
+                pickup_city, pickup_state, shipment_status,
+                pickup_partner_id
+         FROM merchant_shipments
+         WHERE id = ?
+         FOR UPDATE`,
+        [shipmentId]
+      );
+
+      if (shipments.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({
+          success: false,
+          message: "Shipment not found"
+        });
+      }
+
+      const shipment = shipments[0];
+
+      if (
+        shipment.shipment_status !== "Ready for Pickup" ||
+        shipment.pickup_partner_id !== null
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: "This shipment is no longer available for pickup"
+        });
+      }
+
+      const sameCity =
+        String(partner.city || "").trim().toLowerCase() ===
+        String(shipment.pickup_city || "").trim().toLowerCase();
+
+      const sameState =
+        String(partner.state || "").trim().toLowerCase() ===
+        String(shipment.pickup_state || "").trim().toLowerCase();
+
+      if (!sameCity || !sameState) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(403).json({
+          success: false,
+          message: "This pickup is outside your registered city and state"
+        });
+      }
+
+      await connection.query(
+        `UPDATE merchant_shipments
+         SET pickup_partner_id = ?,
+             delivery_partner_id = ?,
+             shipment_status = 'Pickup Assigned',
+             assigned_at = NOW()
+         WHERE id = ?
+           AND shipment_status = 'Ready for Pickup'
+           AND pickup_partner_id IS NULL`,
+        [partnerId, partnerId, shipmentId]
+      );
+
+      const [updated] = await connection.query(
+        `SELECT pickup_partner_id, shipment_status
+         FROM merchant_shipments
+         WHERE id = ?`,
+        [shipmentId]
+      );
+
+      if (
+        updated.length === 0 ||
+        Number(updated[0].pickup_partner_id) !== partnerId ||
+        updated[0].shipment_status !== "Pickup Assigned"
+      ) {
+        throw new Error("Shipment assignment could not be verified");
+      }
+
+      await connection.query(
+        `UPDATE delivery_partners
+         SET availability_status = 'Busy'
+         WHERE id = ?`,
+        [partnerId]
+      );
+
+      await connection.query(
+        `INSERT INTO shipment_tracking_events
+         (shipment_id, event_status, location_type, hub_id,
+          city, state, notes, updated_by_role, updated_by_id)
+         VALUES (?, 'Pickup Assigned', 'merchant', NULL,
+                 ?, ?, ?, 'delivery', ?)`,
+        [
+          shipmentId,
+          shipment.pickup_city,
+          shipment.pickup_state,
+          "Pickup accepted by delivery partner.",
+          partnerId
+        ]
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      return res.json({
+        success: true,
+        message: "Pickup assigned successfully",
+        shipment: {
+          id: shipmentId,
+          order_id: shipment.order_id,
+          tracking_number: shipment.tracking_number,
+          shipment_status: "Pickup Assigned",
+          pickup_partner_id: partnerId
+        }
+      });
+    } catch (error) {
+      if (connection && transactionStarted) {
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error("Pickup assignment rollback error:", rollbackError);
+        }
+      }
+
+      console.error("Accept shipment pickup error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to accept shipment pickup"
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+
+
+// PUT /api/delivery/shipments/:shipmentId/confirm-pickup
+router.put(
+  "/shipments/:shipmentId/confirm-pickup",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    let connection;
+    let transactionStarted = false;
+
+    try {
+      const shipmentId = Number(req.params.shipmentId);
+      const partnerId = Number(req.user.id);
+
+      if (
+        !Number.isSafeInteger(shipmentId) || shipmentId <= 0 ||
+        !Number.isSafeInteger(partnerId) || partnerId <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shipment or delivery partner ID"
+        });
+      }
+
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [shipments] = await connection.query(
+        `SELECT id, order_id, tracking_number, pickup_city,
+                pickup_state, shipment_status, pickup_partner_id
+         FROM merchant_shipments
+         WHERE id = ?
+         FOR UPDATE`,
+        [shipmentId]
+      );
+
+      if (shipments.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({
+          success: false,
+          message: "Shipment not found"
+        });
+      }
+
+      const shipment = shipments[0];
+
+      if (Number(shipment.pickup_partner_id) !== partnerId) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(403).json({
+          success: false,
+          message: "Only the assigned pickup partner can confirm collection"
+        });
+      }
+
+      if (shipment.shipment_status !== "Pickup Assigned") {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: "Shipment must be Pickup Assigned before collection can be confirmed"
+        });
+      }
+
+      await connection.query(
+        `UPDATE merchant_shipments
+         SET shipment_status = 'Picked Up',
+             picked_up_at = NOW()
+         WHERE id = ? AND pickup_partner_id = ?
+           AND shipment_status = 'Pickup Assigned'`,
+        [shipmentId, partnerId]
+      );
+
+      await connection.query(
+        `INSERT INTO shipment_tracking_events
+         (shipment_id, event_status, location_type, hub_id,
+          city, state, notes, updated_by_role, updated_by_id)
+         VALUES (?, 'Picked Up', 'merchant', NULL,
+                 ?, ?, ?, 'delivery', ?)`,
+        [
+          shipmentId,
+          shipment.pickup_city,
+          shipment.pickup_state,
+          "Delivery partner confirmed collection from merchant.",
+          partnerId
+        ]
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      return res.json({
+        success: true,
+        message: "Pickup confirmed successfully",
+        shipment: {
+          id: shipmentId,
+          order_id: shipment.order_id,
+          tracking_number: shipment.tracking_number,
+          shipment_status: "Picked Up"
+        }
+      });
+    } catch (error) {
+      if (connection && transactionStarted) {
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error("Confirm pickup rollback error:", rollbackError);
+        }
+      }
+
+      console.error("Confirm shipment pickup error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to confirm shipment pickup"
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+
+
+
+// ============================================================
+// LAST-MILE DELIVERY APIs
+// ============================================================
+
+// GET /api/delivery/shipments/available-last-mile
+router.get(
+  "/shipments/available-last-mile",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    try {
+      const partnerId = Number(req.user.id);
+
+      const [partners] = await db.query(
+        `SELECT id, city, state, status, availability_status,
+                approval_status
+         FROM delivery_partners
+         WHERE id = ?`,
+        [partnerId]
+      );
+
+      if (partners.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Delivery partner not found"
+        });
+      }
+
+      const partner = partners[0];
+
+      if (
+        String(partner.status).toLowerCase() !== "active" ||
+        String(partner.approval_status).toLowerCase() !== "approved"
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Your delivery partner account is not active and approved"
+        });
+      }
+
+      if (
+        String(partner.availability_status).toLowerCase() !== "online"
+      ) {
+        return res.status(409).json({
+          success: false,
+          message: "You must be Online to view available shipments"
+        });
+      }
+
+      if (!partner.city || !partner.state) {
+        return res.status(400).json({
+          success: false,
+          message: "Set your delivery partner city and state first"
+        });
+      }
+
+      const [shipments] = await db.query(
+        `SELECT
+           s.id AS shipment_id,
+           s.order_id,
+           s.merchant_id,
+           s.tracking_number,
+           s.shipment_status,
+           s.ready_at,
+           h.id AS destination_hub_id,
+           h.hub_name AS destination_hub_name,
+           h.city AS destination_city,
+           h.state AS destination_state
+         FROM merchant_shipments s
+         JOIN dispatch_hubs h
+           ON h.id = s.destination_hub_id
+         WHERE s.shipment_status = 'Arrived at Destination Hub'
+           AND s.last_mile_partner_id IS NULL
+           AND h.status = 'Active'
+           AND LOWER(TRIM(h.city)) = LOWER(TRIM(?))
+           AND LOWER(TRIM(h.state)) = LOWER(TRIM(?))
+         ORDER BY s.id ASC`,
+        [partner.city, partner.state]
+      );
+
+      return res.json({
+        success: true,
+        count: shipments.length,
+        shipments
+      });
+    } catch (error) {
+      console.error("Available last-mile shipments error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to load available last-mile shipments"
+      });
+    }
+  }
+);
+
+
+// POST /api/delivery/shipments/:shipmentId/accept-last-mile
+router.post(
+  "/shipments/:shipmentId/accept-last-mile",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    let connection;
+    let transactionStarted = false;
+
+    try {
+      const shipmentId = Number(req.params.shipmentId);
+      const partnerId = Number(req.user.id);
+
+      if (
+        !Number.isSafeInteger(shipmentId) || shipmentId <= 0 ||
+        !Number.isSafeInteger(partnerId) || partnerId <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shipment or delivery partner ID"
+        });
+      }
+
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [partners] = await connection.query(
+        `SELECT id, city, state, status, availability_status,
+                approval_status
+         FROM delivery_partners
+         WHERE id = ?
+         FOR UPDATE`,
+        [partnerId]
+      );
+
+      if (partners.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({
+          success: false,
+          message: "Delivery partner not found"
+        });
+      }
+
+      const partner = partners[0];
+
+      if (
+        String(partner.status).toLowerCase() !== "active" ||
+        String(partner.approval_status).toLowerCase() !== "approved"
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(403).json({
+          success: false,
+          message: "Your delivery partner account is not active and approved"
+        });
+      }
+
+      if (
+        String(partner.availability_status).toLowerCase() !== "online"
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: "You must be Online to accept a shipment"
+        });
+      }
+
+      const [shipments] = await connection.query(
+        `SELECT s.id, s.order_id, s.merchant_id, s.tracking_number,
+                s.shipment_status, s.destination_hub_id,
+                h.hub_name, h.city AS destination_city,
+                h.state AS destination_state, h.status AS hub_status
+         FROM merchant_shipments s
+         JOIN dispatch_hubs h ON h.id = s.destination_hub_id
+         WHERE s.id = ?
+         FOR UPDATE`,
+        [shipmentId]
+      );
+
+      if (shipments.length === 0) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({
+          success: false,
+          message: "Shipment not found"
+        });
+      }
+
+      const shipment = shipments[0];
+
+      if (
+        shipment.shipment_status !== "Arrived at Destination Hub" ||
+        shipment.last_mile_partner_id
+      ) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: "Shipment is no longer available for last-mile assignment",
+          currentStatus: shipment.shipment_status
+        });
+      }
+
+      if (shipment.hub_status !== "Active") {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: "Destination hub is inactive"
+        });
+      }
+
+      const sameCity =
+        String(partner.city || "").trim().toLowerCase() ===
+        String(shipment.destination_city || "").trim().toLowerCase();
+
+      const sameState =
+        String(partner.state || "").trim().toLowerCase() ===
+        String(shipment.destination_state || "").trim().toLowerCase();
+
+      if (!sameCity || !sameState) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(403).json({
+          success: false,
+          message: "This shipment belongs to a different delivery city or state"
+        });
+      }
+
+      await connection.query(
+        `UPDATE merchant_shipments
+         SET last_mile_partner_id = ?,
+             delivery_partner_id = ?,
+             shipment_status = 'Assigned for Last Mile',
+             assigned_at = NOW()
+         WHERE id = ?
+           AND last_mile_partner_id IS NULL
+           AND shipment_status = 'Arrived at Destination Hub'`,
+        [partnerId, partnerId, shipmentId]
+      );
+
+      const [updated] = await connection.query(
+        `SELECT last_mile_partner_id, shipment_status
+         FROM merchant_shipments
+         WHERE id = ?`,
+        [shipmentId]
+      );
+
+      if (
+        updated.length === 0 ||
+        Number(updated[0].last_mile_partner_id) !== partnerId ||
+        updated[0].shipment_status !== "Assigned for Last Mile"
+      ) {
+        throw new Error("Shipment assignment verification failed");
+      }
+
+      await connection.query(
+        `UPDATE delivery_partners
+         SET availability_status = 'Busy'
+         WHERE id = ?`,
+        [partnerId]
+      );
+
+      await connection.query(
+        `INSERT INTO shipment_tracking_events
+          (shipment_id, event_status, location_type, hub_id,
+           city, state, notes, updated_by_role, updated_by_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          shipmentId,
+          "Assigned for Last Mile",
+          "hub",
+          shipment.destination_hub_id,
+          shipment.destination_city,
+          shipment.destination_state,
+          `Last-mile delivery accepted by partner ${partnerId}`,
+          "delivery",
+          partnerId
+        ]
+      );
+
+      await connection.commit();
+      transactionStarted = false;
+
+      return res.json({
+        success: true,
+        message: "Last-mile shipment accepted successfully",
+        shipment: {
+          id: shipment.id,
+          order_id: shipment.order_id,
+          tracking_number: shipment.tracking_number,
+          last_mile_partner_id: partnerId,
+          shipment_status: "Assigned for Last Mile",
+          destination_hub: shipment.hub_name
+        }
+      });
+    } catch (error) {
+      if (connection && transactionStarted) {
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error("Last-mile assignment rollback error:", rollbackError.message);
+        }
+      }
+
+      console.error("Accept last-mile shipment error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to accept last-mile shipment"
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+
+
+// PUT /api/delivery/shipments/:shipmentId/last-mile-status
+// Allowed transitions: Assigned for Last Mile -> Out for Delivery -> Delivered
+router.put(
+  "/shipments/:shipmentId/last-mile-status",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    let connection;
+    let transactionStarted = false;
+
+    try {
+      const shipmentId = Number(req.params.shipmentId);
+      const partnerId = Number(req.user.id);
+      const requestedStatus = req.body.status;
+
+      if (
+        !Number.isSafeInteger(shipmentId) || shipmentId <= 0 ||
+        !Number.isSafeInteger(partnerId) || partnerId <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid shipment or delivery partner ID"
+        });
+      }
+
+      if (!["Out for Delivery", "Delivered"].includes(requestedStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: "status must be Out for Delivery or Delivered"
+        });
+      }
+
+      connection = await db.getConnection();
+      await connection.beginTransaction();
+      transactionStarted = true;
+
+      const [shipments] = await connection.query(
+        `SELECT s.id, s.order_id, s.tracking_number,
+                s.shipment_status, s.last_mile_partner_id,
+                s.destination_hub_id,
+                h.city AS destination_city, h.state AS destination_state
+         FROM merchant_shipments s
+         JOIN dispatch_hubs h ON h.id = s.destination_hub_id
+         WHERE s.id = ?
+         FOR UPDATE`,
+        [shipmentId]
+      );
+
+      if (shipments.length === 0) {
+await connection.rollback();
+        transactionStarted = false;
+        return res.status(404).json({
+          success: false,
+          message: "Shipment not found"
+        });
+      }
+
+      const shipment = shipments[0];
+
+      if (Number(shipment.last_mile_partner_id) !== partnerId) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(403).json({
+          success: false,
+          message: "Only the assigned last-mile partner can update this shipment"
+        });
+      }
+
+      const expectedCurrentStatus =
+        requestedStatus === "Out for Delivery"
+          ? "Assigned for Last Mile"
+          : "Out for Delivery";
+
+      if (shipment.shipment_status !== expectedCurrentStatus) {
+        await connection.rollback();
+        transactionStarted = false;
+        return res.status(409).json({
+          success: false,
+          message: `Shipment must be ${expectedCurrentStatus} before changing to ${requestedStatus}`,
+          currentStatus: shipment.shipment_status
+        });
+      }
+
+      if (requestedStatus === "Delivered") {
+        await connection.query(
+          `UPDATE merchant_shipments
+           SET shipment_status = 'Delivered',
+               delivered_at = NOW()
+           WHERE id = ? AND last_mile_partner_id = ?
+             AND shipment_status = 'Out for Delivery'`,
+          [shipmentId, partnerId]
+        );
+      } else {
+        await connection.query(
+          `UPDATE merchant_shipments
+           SET shipment_status = 'Out for Delivery'
+           WHERE id = ? AND last_mile_partner_id = ?
+             AND shipment_status = 'Assigned for Last Mile'`,
+          [shipmentId, partnerId]
+        );
+      }
+
+      let eventCity = shipment.destination_city;
+      let eventState = shipment.destination_state;
+      let locationType = "hub";
+      let eventNotes = `Last-mile shipment status changed to ${requestedStatus}`;
+
+      if (requestedStatus === "Delivered") {
+        const [addresses] = await connection.query(
+          `SELECT a.city, a.state
+           FROM orders o
+           LEFT JOIN addresses a ON a.id = o.address_id
+           WHERE o.id = ?
+           LIMIT 1`,
+          [shipment.order_id]
+        );
+
+        if (addresses.length && addresses[0].city) {
+          eventCity = addresses[0].city;
+        }
+        if (addresses.length && addresses[0].state) {
+          eventState = addresses[0].state;
+        }
+
+        locationType = "customer";
+        eventNotes = "Shipment delivered to the customer";
+      }
+
+      await connection.query(
+        `INSERT INTO shipment_tracking_events
+          (shipment_id, event_status, location_type, hub_id,
+           city, state, notes, updated_by_role, updated_by_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          shipmentId,
+          requestedStatus,
+          locationType,
+          requestedStatus === "Delivered" ? null : shipment.destination_hub_id,
+          eventCity,
+          eventState,
+          eventNotes,
+          "delivery",
+          partnerId
+        ]
+      );
+
+      if (requestedStatus === "Delivered") {
+        const [activeAssignments] = await connection.query(
+          `SELECT COUNT(*) AS active_count
+           FROM merchant_shipments
+           WHERE (
+             pickup_partner_id = ?
+             AND shipment_status IN ('Pickup Assigned', 'Picked Up')
+           ) OR (
+             last_mile_partner_id = ?
+             AND shipment_status IN ('Assigned for Last Mile', 'Out for Delivery')
+           )`,
+          [partnerId, partnerId]
+        );
+
+        if (Number(activeAssignments[0].active_count) === 0) {
+          await connection.query(
+            `UPDATE delivery_partners
+             SET availability_status = 'Online'
+             WHERE id = ?`,
+            [partnerId]
+          );
+        }
+      }
+
+      await connection.commit();
+      transactionStarted = false;
+
+      return res.json({
+        success: true,
+        message: `Shipment status updated to ${requestedStatus}`,
+        shipment: {
+          id: shipmentId,
+          order_id: shipment.order_id,
+          tracking_number: shipment.tracking_number,
+          shipment_status: requestedStatus
+        }
+      });
+    } catch (error) {
+      if (connection && transactionStarted) {
+        try {
+          await connection.rollback();
+        } catch (rollbackError) {
+          console.error("Last-mile status rollback error:", rollbackError.message);
+        }
+      }
+
+      console.error("Last-mile status update error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update last-mile shipment status"
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+
+
+
+// GET /api/delivery/shipments/my-assignments
+// Returns shipments assigned to the logged-in delivery partner.
+router.get(
+  "/shipments/my-assignments",
+  requireAuth,
+  requireRole("delivery"),
+  async (req, res) => {
+    try {
+      const partnerId = Number(req.user.id);
+
+      if (!Number.isSafeInteger(partnerId) || partnerId <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid delivery partner ID"
+        });
+      }
+
+      // First-mile shipments assigned to this partner
+      const [pickupShipments] = await db.query(
+        `SELECT
+           ms.id AS shipment_id,
+           ms.order_id,
+           ms.merchant_id,
+           ms.tracking_number,
+           ms.pickup_address,
+           ms.pickup_city,
+           ms.pickup_state,
+           ms.pickup_pincode,
+           ms.shipment_status,
+           ms.ready_at,
+           ms.assigned_at,
+           ms.picked_up_at,
+           ms.origin_hub_id,
+           h.hub_name AS origin_hub_name,
+           h.city AS origin_hub_city,
+           h.state AS origin_hub_state
+         FROM merchant_shipments ms
+         LEFT JOIN dispatch_hubs h
+           ON h.id = ms.origin_hub_id
+         WHERE ms.pickup_partner_id = ?
+           AND ms.shipment_status IN ('Pickup Assigned', 'Picked Up')
+         ORDER BY ms.assigned_at DESC`,
+        [partnerId]
+      );
+
+      // Last-mile shipments assigned to this partner
+      const [lastMileShipments] = await db.query(
+        `SELECT
+           ms.id AS shipment_id,
+           ms.order_id,
+           ms.merchant_id,
+           ms.tracking_number,
+           ms.shipment_status,
+           ms.assigned_at,
+           ms.destination_hub_id,
+           h.hub_name AS destination_hub_name,
+           h.city AS destination_hub_city,
+           h.state AS destination_hub_state
+         FROM merchant_shipments ms
+         LEFT JOIN dispatch_hubs h
+           ON h.id = ms.destination_hub_id
+         WHERE ms.last_mile_partner_id = ?
+           AND ms.shipment_status IN (
+             'Assigned for Last Mile',
+             'Out for Delivery'
+           )
+         ORDER BY ms.assigned_at DESC`,
+        [partnerId]
+      );
+
+      return res.json({
+        success: true,
+        pickupShipments,
+        lastMileShipments,
+        total:
+          pickupShipments.length + lastMileShipments.length
+      });
+
+    } catch (error) {
+      console.error("My assigned shipments error:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to retrieve assigned shipments"
+      });
+    }
+  }
+);
+
+
 
 module.exports = router;
 

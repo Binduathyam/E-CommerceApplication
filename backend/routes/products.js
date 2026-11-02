@@ -109,16 +109,50 @@ router.get(
 
     try {
 
+console.log("ADMIN PRODUCTS ROUTE HIT");
+
       const [products] =
         await db.query(`
           SELECT
             p.id,
             p.name,
             p.category,
-            p.price,
-            p.original_price,
-            p.discount,
-            p.stock,
+            COALESCE(
+  (
+    SELECT MIN(pv1.price)
+    FROM product_variants pv1
+    WHERE pv1.product_id = p.id
+  ),
+  p.price
+) AS price,
+
+p.original_price,
+
+COALESCE(
+  (
+    SELECT ROUND(
+      (
+        1 - (
+          MIN(pv2.discount_price) /
+          NULLIF(MIN(pv2.price), 0)
+        )
+      ) * 100
+    )
+    FROM product_variants pv2
+    WHERE pv2.product_id = p.id
+      AND pv2.discount_price IS NOT NULL
+  ),
+  p.discount
+) AS discount,
+
+COALESCE(
+  (
+    SELECT SUM(pv3.stock)
+    FROM product_variants pv3
+    WHERE pv3.product_id = p.id
+  ),
+  p.stock
+) AS stock,
             p.brand,
             p.description,
             p.size_fit,
@@ -135,6 +169,7 @@ router.get(
 
           LEFT JOIN users u
           ON p.merchant_id = u.id
+         
 
           ORDER BY p.id DESC
         `);
@@ -164,55 +199,81 @@ router.get(
 );
 
 
+
 // =================================================
 // CUSTOMER GET PRODUCTS
 // ONLY APPROVED PRODUCTS
 // =================================================
 
-router.get(
-  "/",
+router.get("/", async (req, res) => {
+  try {
+    const [products] = await db.query(`
+      SELECT *
+      FROM products
+      WHERE status = 'approved'
+      ORDER BY id DESC
+    `);
 
-  async (req, res) => {
+    for (const product of products) {
+  // PRODUCT IMAGES
+  const [images] = await db.query(
+    `
+    SELECT
+      id,
+      image_url,
+      sort_order,
+      is_primary
+    FROM product_images
+    WHERE product_id = ?
+    ORDER BY sort_order ASC
+    `,
+    [product.id]
+  );
 
-    try {
+  product.product_images = images;
 
-      const [products] =
-        await db.query(`
-          SELECT *
-          FROM products
-          WHERE status = 'approved'
-          ORDER BY id DESC
-        `);
+  // PRODUCT VARIANTS
+  const [variants] = await db.query(
+    `
+    SELECT
+      id,
+      product_id,
+      attributes,
+      price,
+      discount_price,
+      stock,
+      sku,
+      available,
+      images
+    FROM product_variants
+    WHERE product_id = ?
+    ORDER BY id ASC
+    `,
+    [product.id]
+  );
 
+  product.product_variants = variants;
+}
+    res.json({
+      success: true,
+      products,
+    });
+  } catch (error) {
+    console.error("Products error:", error);
 
-      res.json({
-        success: true,
-        products,
-      });
-
-    } catch (error) {
-
-      console.error(
-        "Products error:",
-        error
-      );
-
-      res.status(500).json({
-        success: false,
-        message:
-          "Failed to fetch products",
-      });
-
-    }
-
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch products",
+    });
   }
-);
+});
 
 
 // =================================================
 // GET MERCHANT PRODUCTS
 // MERCHANT CAN SEE ALL HIS PRODUCTS
 // PENDING + APPROVED + REJECTED
+// WITH IMAGES + VARIANTS
 // =================================================
 
 router.get(
@@ -223,37 +284,85 @@ router.get(
   requireRole("merchant"),
 
   async (req, res) => {
-
     try {
 
+      // SECURITY CHECK
       if (
         Number(req.params.merchantId) !==
         Number(req.user.id)
       ) {
-
         return res.status(403).json({
           success: false,
           message:
             "You can only access your own products",
         });
+      }
 
+      // GET ALL PRODUCTS
+      const [products] = await db.query(
+        `
+        SELECT *
+        FROM products
+        WHERE merchant_id = ?
+        ORDER BY id DESC
+        `,
+        [req.params.merchantId]
+      );
+
+      // GET IMAGES + VARIANTS
+      // FOR EACH PRODUCT
+      for (const product of products) {
+
+        // -----------------------------------------
+        // PRODUCT IMAGES
+        // -----------------------------------------
+
+        const [images] = await db.query(
+          `
+          SELECT
+            id,
+            product_id,
+            image_url,
+            sort_order,
+            is_primary
+          FROM product_images
+          WHERE product_id = ?
+          ORDER BY sort_order ASC, id ASC
+          `,
+          [product.id]
+        );
+
+        product.product_images = images;
+
+
+        // -----------------------------------------
+        // PRODUCT VARIANTS
+        // -----------------------------------------
+
+        const [variants] = await db.query(
+          `
+          SELECT
+            id,
+            product_id,
+            attributes,
+            price,
+            discount_price,
+            stock,
+            sku,
+            available,
+            images
+          FROM product_variants
+          WHERE product_id = ?
+          ORDER BY id ASC
+          `,
+          [product.id]
+        );
+
+        product.product_variants = variants;
       }
 
 
-      const [products] =
-        await db.query(
-          `
-          SELECT *
-          FROM products
-          WHERE merchant_id = ?
-          ORDER BY id DESC
-          `,
-          [
-            req.params.merchantId,
-          ]
-        );
-
-
+      // RESPONSE
       res.json({
         success: true,
         products,
@@ -271,12 +380,10 @@ router.get(
         message:
           "Failed to fetch merchant products",
       });
-
     }
-
   }
 );
-
+  
 
 // =================================================
 // UPLOAD PRODUCT IMAGE
@@ -369,11 +476,18 @@ router.post(
 
         category,
 
+        product_type,
+
+        availability,
+
         price,
 
         original_price,
 
+
         discount,
+
+         gst_rate,
 
         stock,
 
@@ -386,6 +500,11 @@ router.post(
         material_care,
 
         image,
+
+        product_details,
+
+        product_images,
+
 
       } = req.body;
 
@@ -499,65 +618,177 @@ router.post(
         await db.query(
           `
           INSERT INTO products
-          (
-            merchant_id,
-            name,
-            category,
-            price,
-            original_price,
-            discount,
-            stock,
-            brand,
-            description,
-            size_fit,
-            material_care,
-            image,
-            status
-          )
+        (
+          merchant_id,
+         name,
+         category,
+         product_type,
+         availability,
+         price,
+         original_price,
+         discount,
+         gst_rate,
+         stock,
+         brand,
+         description,
+         size_fit,
+         material_care,
+         image,
+         product_details,
+         status
+        )
 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+
+
           `,
 
           [
+  merchant_id,
 
-            merchant_id,
+  name.trim(),
 
-            name.trim(),
+  category.trim(),
 
-            category.trim(),
+  product_type || "",
 
-            Number(price),
+  availability ||
+    (Number(stock) > 0
+      ? "In Stock"
+      : "Out of Stock"),
 
-            original_price !==
-              undefined &&
-            original_price !== ""
+  Number(price),
 
-              ? Number(original_price)
+  original_price !== undefined &&
+  original_price !== ""
+    ? Number(original_price)
+    : Number(price),
 
-              : Number(price),
+    discount !== undefined &&
+  discount !== ""
+    ? Number(discount)
+    : 0,
 
-            discount !== undefined &&
-            discount !== ""
+  gst_rate !== undefined &&
+  gst_rate !== "" &&
+  gst_rate !== null
+    ? Number(gst_rate)
+    : null,
 
-              ? Number(discount)
+  Number(stock),
+  brand || "",
 
-              : 0,
+  description.trim(),
 
-            Number(stock),
+  size_fit.trim(),
 
-            brand || "",
+  material_care.trim(),
 
-            description.trim(),
+  image || "",
 
-            size_fit.trim(),
+  product_details
+    ? JSON.stringify(product_details)
+    : null,
+]
 
-            material_care.trim(),
-
-            image || "",
-
-          ]
         );
 
+      // =========================================
+// SAVE PRODUCT IMAGES
+// =========================================
+
+if (
+  Array.isArray(product_images) &&
+  product_images.length > 0
+) {
+
+  for (
+    let i = 0;
+    i < product_images.length && i < 6;
+    i++
+  ) {
+
+    const imageItem =
+      product_images[i];
+
+    const imageUrl =
+      typeof imageItem === "string"
+        ? imageItem
+        : imageItem?.image_url ||
+          imageItem?.image ||
+          imageItem?.url ||
+          "";
+
+    if (!imageUrl) {
+      continue;
+    }
+
+    await db.query(
+      `
+      INSERT INTO product_images
+      (
+        product_id,
+        image_url,
+        sort_order,
+        is_primary
+      )
+      VALUES (?, ?, ?, ?)
+      `,
+      [
+        result.insertId,
+        imageUrl,
+        i,
+        i === 0 ? 1 : 0,
+      ]
+    );
+
+  }
+
+}
+  
+
+
+// SAVE PRODUCT VARIANTS
+if (
+  Array.isArray(req.body.product_variants) &&
+  req.body.product_variants.length > 0
+) {
+  for (const variant of req.body.product_variants) {
+
+    await db.query(
+      `
+      INSERT INTO product_variants
+      (
+        product_id,
+        attributes,
+        price,
+        discount_price,
+        stock,
+        sku,
+        available,
+        images
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        result.insertId,
+        JSON.stringify(variant.attributes || {}),
+        Number(variant.price),
+        variant.discount_price !== undefined &&
+        variant.discount_price !== null &&
+        variant.discount_price !== ""
+          ? Number(variant.discount_price)
+          : null,
+        Number(variant.stock || 0),
+        variant.sku || null,
+        variant.available ? 1 : 0,
+        variant.images
+          ? JSON.stringify(variant.images)
+          : null
+      ]
+    );
+  }
+}
 
       const [products] =
         await db.query(
@@ -570,6 +801,8 @@ router.post(
             result.insertId,
           ]
         );
+
+
 
 
       res.status(201).json({
@@ -796,6 +1029,43 @@ router.get(
 
       }
 
+      const [images] = await db.query(
+        `
+        SELECT
+          id,
+          image_url,
+          sort_order,
+          is_primary
+        FROM product_images
+        WHERE product_id = ?
+        ORDER BY sort_order ASC
+        `,
+        [req.params.id]
+      );
+
+      products[0].product_images = images;
+
+
+        const [variants] = await db.query(
+  `
+  SELECT
+    id,
+    product_id,
+    attributes,
+    price,
+    discount_price,
+    stock,
+    sku,
+    available,
+    images
+  FROM product_variants
+  WHERE product_id = ?
+  ORDER BY id ASC
+  `,
+  [req.params.id]
+);
+
+products[0].product_variants = variants;
 
       res.json({
 
@@ -828,6 +1098,7 @@ router.get(
 );
 
 
+
 // =================================================
 // UPDATE PRODUCT
 // WHEN MERCHANT EDITS → BACK TO PENDING
@@ -841,88 +1112,69 @@ router.put(
   requireRole("merchant"),
 
   async (req, res) => {
-
     try {
 
       const {
-
         merchant_id,
-
         name,
-
         category,
-
+        product_type,
         price,
-
         original_price,
-
         discount,
-
+        gst_rate,
         stock,
-
         brand,
-
-        description,
-
+        availability,
         size_fit,
-
         material_care,
-
+        description,
         image,
-
+        product_images,
+        product_variants,
       } = req.body;
 
 
+      // =========================================
+      // VALIDATION
+      // =========================================
+
       if (
-
         !merchant_id ||
-
         !name ||
-
         !category ||
-
         price === undefined ||
-
         stock === undefined ||
-
         !description ||
-
         !size_fit ||
-
         !material_care
-
       ) {
-
         return res.status(400).json({
-
           success: false,
-
           message:
             "Please provide all required product details",
-
         });
-
       }
 
+
+      // =========================================
+      // SECURITY CHECK
+      // =========================================
 
       if (
-
         Number(merchant_id) !==
         Number(req.user.id)
-
       ) {
-
         return res.status(403).json({
-
           success: false,
-
-          message:
-            "Access denied",
-
+          message: "Access denied",
         });
-
       }
 
+
+      // =========================================
+      // CHECK PRODUCT BELONGS TO MERCHANT
+      // =========================================
 
       const [existingProducts] =
         await db.query(
@@ -939,72 +1191,75 @@ router.put(
         );
 
 
-      if (
-        existingProducts.length === 0
-      ) {
-
+      if (existingProducts.length === 0) {
         return res.status(404).json({
-
           success: false,
-
           message:
             "Product not found or does not belong to this merchant",
-
         });
-
       }
 
+
+      // =========================================
+      // UPDATE MAIN PRODUCT
+      // =========================================
 
       await db.query(
         `
         UPDATE products
-
         SET
           name = ?,
           category = ?,
+          product_type = ?,
           price = ?,
           original_price = ?,
           discount = ?,
+          gst_rate = ?,
           stock = ?,
           brand = ?,
+          availability = ?,
           description = ?,
           size_fit = ?,
           material_care = ?,
           image = ?,
-
           status = 'pending'
-
         WHERE id = ?
         AND merchant_id = ?
         `,
-
         [
 
           name.trim(),
 
           category.trim(),
 
+          product_type || "",
+
           Number(price),
 
-          original_price !==
-            undefined &&
+          original_price !== undefined &&
           original_price !== ""
-
             ? Number(original_price)
-
             : Number(price),
 
-          discount !==
-            undefined &&
+          discount !== undefined &&
           discount !== ""
-
             ? Number(discount)
-
             : 0,
+
+          gst_rate !== undefined &&
+          gst_rate !== "" &&
+          gst_rate !== null
+            ? Number(gst_rate)
+            : null,
 
           Number(stock),
 
           brand || "",
+
+          availability ||
+            (Number(stock) > 0
+              ? "In Stock"
+              : "Out of Stock"),
 
           description.trim(),
 
@@ -1022,6 +1277,159 @@ router.put(
       );
 
 
+      // =========================================
+      // UPDATE PRODUCT IMAGES
+      // =========================================
+
+      if (Array.isArray(product_images)) {
+
+        // DELETE OLD IMAGES
+
+        await db.query(
+          `
+          DELETE FROM product_images
+          WHERE product_id = ?
+          `,
+          [req.params.id]
+        );
+
+
+        // INSERT NEW IMAGES
+
+        for (
+          let i = 0;
+          i < product_images.length && i < 6;
+          i++
+        ) {
+
+          const imageItem =
+            product_images[i];
+
+
+          const imageUrl =
+            typeof imageItem === "string"
+              ? imageItem
+              : imageItem?.image_url ||
+                imageItem?.image ||
+                imageItem?.url ||
+                "";
+
+
+          if (!imageUrl) {
+            continue;
+          }
+
+
+          await db.query(
+            `
+            INSERT INTO product_images
+            (
+              product_id,
+              image_url,
+              sort_order,
+              is_primary
+            )
+            VALUES (?, ?, ?, ?)
+            `,
+            [
+              req.params.id,
+              imageUrl,
+              i,
+              i === 0 ? 1 : 0,
+            ]
+          );
+
+        }
+      }
+
+
+      // =========================================
+      // UPDATE PRODUCT VARIANTS
+      // =========================================
+
+      if (Array.isArray(product_variants)) {
+
+        // DELETE OLD VARIANTS
+
+        await db.query(
+          `
+          DELETE FROM product_variants
+          WHERE product_id = ?
+          `,
+          [req.params.id]
+        );
+
+
+        // INSERT UPDATED VARIANTS
+
+        for (const variant of product_variants) {
+
+          await db.query(
+            `
+            INSERT INTO product_variants
+            (
+              product_id,
+              attributes,
+              price,
+              discount_price,
+              stock,
+              sku,
+              available,
+              images
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            [
+
+              req.params.id,
+
+              JSON.stringify(
+                variant.attributes || {}
+              ),
+
+              Number(
+                variant.price || 0
+              ),
+
+              variant.discount_price !== undefined &&
+              variant.discount_price !== null &&
+              variant.discount_price !== ""
+                ? Number(
+                    variant.discount_price
+                  )
+                : null,
+
+              Number(
+                variant.stock || 0
+              ),
+
+              variant.sku
+                ? String(
+                    variant.sku
+                  ).trim()
+                : null,
+
+              variant.available
+                ? 1
+                : 0,
+
+              variant.images
+                ? JSON.stringify(
+                    variant.images
+                  )
+                : null,
+
+            ]
+          );
+
+        }
+      }
+
+
+      // =========================================
+      // GET UPDATED PRODUCT
+      // =========================================
+
       const [updatedProducts] =
         await db.query(
           `
@@ -1029,11 +1437,13 @@ router.put(
           FROM products
           WHERE id = ?
           `,
-          [
-            req.params.id,
-          ]
+          [req.params.id]
         );
 
+
+      // =========================================
+      // RESPONSE
+      // =========================================
 
       res.json({
 
@@ -1047,12 +1457,14 @@ router.put(
 
       });
 
+
     } catch (error) {
 
       console.error(
         "Update product error:",
         error
       );
+
 
       res.status(500).json({
 

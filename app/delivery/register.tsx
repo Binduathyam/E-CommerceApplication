@@ -1,22 +1,32 @@
 import React, { useState } from "react";
 
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 import { useRouter } from "expo-router";
 
+import * as ImagePicker from "expo-image-picker";
+
 import { API_BASE_URL } from "../../config/api";
+
+const SECURITY_QUESTIONS = [
+  "What was the name of your first school?",
+  "What was the name of your first pet?",
+  "What is your childhood nickname?",
+  "What is your favourite food?",
+];
 
 export default function DeliveryRegister() {
   const router = useRouter();
@@ -47,6 +57,30 @@ export default function DeliveryRegister() {
 
   const [confirmPassword, setConfirmPassword] =
     useState("");
+
+  // ==========================================
+  // DRIVING LICENCE IMAGE
+  // ==========================================
+
+  const [licenseImage, setLicenseImage] =
+    useState<any>(null);
+
+  // ==========================================
+  // SECURITY QUESTION
+  // ==========================================
+
+  const [securityQuestion, setSecurityQuestion] =
+    useState("");
+
+  const [securityAnswer, setSecurityAnswer] =
+    useState("");
+
+  const [showQuestionList, setShowQuestionList] =
+    useState(false);
+
+  // ==========================================
+  // OTHER STATES
+  // ==========================================
 
   const [showPassword, setShowPassword] =
     useState(false);
@@ -87,6 +121,95 @@ export default function DeliveryRegister() {
     hasMinimumLength;
 
   // ==========================================
+  // PICK DRIVING LICENCE IMAGE
+  // ==========================================
+
+  const pickLicenseImage = async () => {
+    try {
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (!permission.granted) {
+        Alert.alert(
+          "Permission Required",
+          "Please allow photo library permission to upload your Driving Licence."
+        );
+
+        return;
+      }
+
+      const result =
+        await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ["images"],
+          allowsEditing: true,
+          aspect: [16, 10],
+          quality: 0.8,
+        });
+
+      if (result.canceled) {
+        return;
+      }
+
+      const asset = result.assets[0];
+
+      if (!asset) {
+        return;
+      }
+
+      // ========================================
+      // FILE TYPE CHECK
+      // ========================================
+
+      if (
+        asset.mimeType &&
+        ![
+          "image/jpeg",
+          "image/jpg",
+          "image/png",
+        ].includes(asset.mimeType)
+      ) {
+        Alert.alert(
+          "Invalid Image",
+          "Please select a JPG, JPEG or PNG image."
+        );
+
+        return;
+      }
+
+      // ========================================
+      // FILE SIZE CHECK
+      // ========================================
+
+      if (
+        asset.fileSize &&
+        asset.fileSize > 5 * 1024 * 1024
+      ) {
+        Alert.alert(
+          "Image Too Large",
+          "Driving Licence image must be less than 5MB."
+        );
+
+        return;
+      }
+
+      setLicenseImage(asset);
+
+      setMessage("");
+
+    } catch (error) {
+      console.error(
+        "Driving Licence image picker error:",
+        error
+      );
+
+      Alert.alert(
+        "Error",
+        "Unable to select Driving Licence image."
+      );
+    }
+  };
+
+  // ==========================================
   // REGISTER
   // ==========================================
 
@@ -108,10 +231,24 @@ export default function DeliveryRegister() {
       !vehicleNumber.trim() ||
       !licenseNumber.trim() ||
       !password ||
-      !confirmPassword
+      !confirmPassword ||
+      !securityQuestion ||
+      !securityAnswer.trim()
     ) {
       setMessage(
         "Please fill all the required fields."
+      );
+
+      return;
+    }
+
+    // ========================================
+    // DRIVING LICENCE IMAGE
+    // ========================================
+
+    if (!licenseImage) {
+      setMessage(
+        "Please upload your Driving Licence image."
       );
 
       return;
@@ -271,58 +408,142 @@ export default function DeliveryRegister() {
     }
 
     // ========================================
+    // SECURITY QUESTION CHECK
+    // ========================================
+
+    if (!securityQuestion) {
+      setMessage(
+        "Please select a security question."
+      );
+
+      return;
+    }
+
+    // ========================================
+    // SECURITY ANSWER CHECK
+    // ========================================
+
+    if (!securityAnswer.trim()) {
+      setMessage(
+        "Please enter your security answer."
+      );
+
+      return;
+    }
+
+    // ========================================
     // REGISTER
     // ========================================
 
     try {
       setLoading(true);
 
-      const response = await fetch(
-        `${API_BASE_URL}/api/delivery/register`,
-        {
-          method: "POST",
+      // ======================================
+      // FORM DATA
+      // ======================================
 
-          headers: {
-            "Content-Type":
-              "application/json",
+      const formData =
+        new FormData();
 
-            Accept:
-              "application/json",
-          },
-
-          body: JSON.stringify({
-            name:
-              name.trim(),
-
-            email:
-              normalizedEmail,
-
-            phone:
-              cleanedPhone,
-
-            password:
-              password,
-
-            address:
-              address.trim(),
-
-            city:
-              city.trim(),
-
-            state:
-              state.trim(),
-
-            vehicle_type:
-              vehicleType,
-
-            vehicle_number:
-              vehicleNumber.trim(),
-
-            license_number:
-              licenseNumber.trim(),
-          }),
-        }
+      formData.append(
+        "name",
+        name.trim()
       );
+
+      formData.append(
+        "email",
+        normalizedEmail
+      );
+
+      formData.append(
+        "phone",
+        cleanedPhone
+      );
+
+      formData.append(
+        "password",
+        password
+      );
+
+      formData.append(
+        "address",
+        address.trim()
+      );
+
+      formData.append(
+        "city",
+        city.trim()
+      );
+
+      formData.append(
+        "state",
+        state.trim()
+      );
+
+      formData.append(
+        "vehicle_type",
+        vehicleType
+      );
+
+      formData.append(
+        "vehicle_number",
+        vehicleNumber.trim()
+      );
+
+      formData.append(
+        "license_number",
+        licenseNumber.trim()
+      );
+
+      formData.append(
+        "security_question",
+        securityQuestion
+      );
+
+      formData.append(
+        "security_answer",
+        securityAnswer.trim()
+      );
+
+      // ======================================
+      // DRIVING LICENCE IMAGE
+      // ======================================
+
+      formData.append(
+        "license",
+        {
+          uri: licenseImage.uri,
+          name:
+            licenseImage.fileName ||
+            "driving-license.jpg",
+          type:
+            licenseImage.mimeType ||
+            "image/jpeg",
+        } as any
+      );
+
+      console.log(
+        "DELIVERY REGISTER - starting registration..."
+      );
+
+      // ======================================
+      // API REQUEST
+      // ======================================
+
+      const response =
+        await fetch(
+          `${API_BASE_URL}/api/delivery/register`,
+          {
+            method: "POST",
+
+            headers: {
+              Accept:
+                "application/json",
+            },
+
+            body: formData,
+          }
+        );
 
       const data =
         await response.json();
@@ -336,7 +557,10 @@ export default function DeliveryRegister() {
       // ERROR
       // ========================================
 
-      if (!response.ok) {
+      if (
+        !response.ok ||
+        !data.success
+      ) {
         setMessage(
           data.message ||
             "Delivery partner registration failed."
@@ -350,12 +574,12 @@ export default function DeliveryRegister() {
       // ========================================
 
       setMessage(
-        "Registration successful! Please login."
+        "Registration submitted successfully! Your account is pending admin approval."
       );
 
       Alert.alert(
-        "Registration Successful",
-        "Your delivery partner account has been created. Please login.",
+        "Registration Submitted",
+        "Your delivery partner account has been created and is pending admin approval.",
         [
           {
             text: "Login",
@@ -728,6 +952,102 @@ export default function DeliveryRegister() {
               />
             </View>
 
+            {/* ==================================
+                DRIVING LICENCE IMAGE
+            ================================== */}
+
+            <View
+              style={styles.formGroup}
+            >
+              <Text
+                style={styles.label}
+              >
+                Driving Licence *
+              </Text>
+
+              <TouchableOpacity
+                style={
+                  styles.uploadButton
+                }
+                onPress={
+                  pickLicenseImage
+                }
+                disabled={loading}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={
+                    styles.uploadIcon
+                  }
+                >
+                  📄
+                </Text>
+
+                <View
+                  style={
+                    styles.uploadTextContainer
+                  }
+                >
+                  <Text
+                    style={
+                      styles.uploadTitle
+                    }
+                  >
+                    {licenseImage
+                      ? "Change Driving Licence"
+                      : "Upload Driving Licence"}
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.uploadSubtitle
+                    }
+                  >
+                    JPG, JPEG or PNG • Maximum 5MB
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* IMAGE PREVIEW */}
+
+              {licenseImage && (
+                <View
+                  style={
+                    styles.previewContainer
+                  }
+                >
+                  <Image
+                    source={{
+                      uri: licenseImage.uri,
+                    }}
+                    style={
+                      styles.licensePreview
+                    }
+                  />
+
+                  <TouchableOpacity
+                    style={
+                      styles.removeImageButton
+                    }
+                    onPress={() =>
+                      setLicenseImage(
+                        null
+                      )
+                    }
+                    disabled={loading}
+                  >
+                    <Text
+                      style={
+                        styles.removeImageText
+                      }
+                    >
+                      Remove Image
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
             {/* PASSWORD */}
 
             <View
@@ -954,6 +1274,112 @@ export default function DeliveryRegister() {
               )}
             </View>
 
+            {/* ==================================
+                SECURITY QUESTION
+            ================================== */}
+
+            <View
+              style={styles.formGroup}
+            >
+              <Text
+                style={styles.label}
+              >
+                Security Question
+              </Text>
+
+              <TouchableOpacity
+                style={styles.select}
+                onPress={() =>
+                  setShowQuestionList(
+                    value => !value
+                  )
+                }
+                disabled={loading}
+              >
+                <Text
+                  style={
+                    securityQuestion
+                      ? styles.selectText
+                      : styles.placeholderText
+                  }
+                >
+                  {securityQuestion ||
+                    "Select a security question"}
+                </Text>
+
+                <Text
+                  style={styles.arrow}
+                >
+                  {showQuestionList
+                    ? "▲"
+                    : "▼"}
+                </Text>
+              </TouchableOpacity>
+
+              {showQuestionList && (
+                <View
+                  style={
+                    styles.questionList
+                  }
+                >
+                  {SECURITY_QUESTIONS.map(
+                    question => (
+                      <TouchableOpacity
+                        key={question}
+                        style={
+                          styles.questionItem
+                        }
+                        onPress={() => {
+                          setSecurityQuestion(
+                            question
+                          );
+
+                          setShowQuestionList(
+                            false
+                          );
+                        }}
+                      >
+                        <Text
+                          style={
+                            styles.questionText
+                          }
+                        >
+                          {question}
+                        </Text>
+                      </TouchableOpacity>
+                    )
+                  )}
+                </View>
+              )}
+            </View>
+
+            {/* ==================================
+                SECURITY ANSWER
+            ================================== */}
+
+            <View
+              style={styles.formGroup}
+            >
+              <Text
+                style={styles.label}
+              >
+                Security Answer
+              </Text>
+
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your security answer"
+                placeholderTextColor="#9ca3af"
+                value={securityAnswer}
+                onChangeText={
+                  setSecurityAnswer
+                }
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!loading}
+              />
+            </View>
+
             {/* MESSAGE */}
 
             {message !== "" && (
@@ -987,9 +1413,19 @@ export default function DeliveryRegister() {
               activeOpacity={0.8}
             >
               {loading ? (
-                <ActivityIndicator
-                  color="#ffffff"
-                />
+                <>
+                  <ActivityIndicator
+                    color="#ffffff"
+                  />
+
+                  <Text
+                    style={
+                      styles.loadingButtonText
+                    }
+                  >
+                    Creating Account...
+                  </Text>
+                </>
               ) : (
                 <Text
                   style={
@@ -1199,6 +1635,66 @@ const styles = StyleSheet.create({
   },
 
   // ====================================================
+  // DRIVING LICENCE UPLOAD
+  // ====================================================
+
+  uploadButton: {
+    minHeight: 65,
+    backgroundColor: "#f9fafb",
+    borderWidth: 1,
+    borderColor: "#bfdbfe",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  uploadIcon: {
+    fontSize: 25,
+    marginRight: 11,
+  },
+
+  uploadTextContainer: {
+    flex: 1,
+  },
+
+  uploadTitle: {
+    color: "#2563eb",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  uploadSubtitle: {
+    color: "#71717a",
+    fontSize: 9,
+    marginTop: 3,
+  },
+
+  previewContainer: {
+    marginTop: 12,
+  },
+
+  licensePreview: {
+    width: "100%",
+    height: 190,
+    borderRadius: 10,
+    resizeMode: "cover",
+    backgroundColor: "#f4f4f5",
+  },
+
+  removeImageButton: {
+    marginTop: 8,
+    alignSelf: "flex-end",
+  },
+
+  removeImageText: {
+    color: "#dc2626",
+    fontSize: 10,
+    fontWeight: "800",
+  },
+
+  // ====================================================
   // PASSWORD
   // ====================================================
 
@@ -1281,6 +1777,62 @@ const styles = StyleSheet.create({
   },
 
   // ====================================================
+  // SECURITY QUESTION
+  // ====================================================
+
+  select: {
+    minHeight: 50,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  selectText: {
+    flex: 1,
+    color: "#111827",
+    fontSize: 14,
+  },
+
+  placeholderText: {
+    flex: 1,
+    color: "#9ca3af",
+    fontSize: 14,
+  },
+
+  arrow: {
+    color: "#2563eb",
+    fontSize: 12,
+    marginLeft: 10,
+  },
+
+  questionList: {
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    overflow: "hidden",
+  },
+
+  questionItem: {
+    paddingHorizontal: 13,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#eeeeee",
+  },
+
+  questionText: {
+    color: "#374151",
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  // ====================================================
   // MESSAGE
   // ====================================================
 
@@ -1311,6 +1863,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginTop: 2,
+    flexDirection: "row",
   },
 
   disabledButton: {
@@ -1321,6 +1874,13 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 14,
     fontWeight: "800",
+  },
+
+  loadingButtonText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "800",
+    marginLeft: 8,
   },
 
   // ====================================================

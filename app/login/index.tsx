@@ -415,12 +415,14 @@ export default function LoginScreen() {
           style={
             styles.forgotButton
           }
-          onPress={() =>
-            Alert.alert(
-              'Forgot Password',
-              'Password reset will be connected later.'
-            )
-          }
+onPress={() =>
+  router.push({
+    pathname: '/forgot-password' as any,
+    params: {
+      role: loginType,
+    },
+  })
+}
         >
           <Text
             style={styles.forgotText}

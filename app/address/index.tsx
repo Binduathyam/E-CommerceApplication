@@ -17,6 +17,10 @@ import {
 
 import { API_BASE_URL } from '../../config/api';
 
+// =====================================================
+// TYPES
+// =====================================================
+
 type Address = {
   id: number;
   user_id?: number;
@@ -26,6 +30,7 @@ type Address = {
   city: string;
   state: string;
   pincode: string;
+  is_default?: boolean | number;
 };
 
 type FormData = {
@@ -46,6 +51,10 @@ const emptyForm: FormData = {
   pincode: '',
 };
 
+// =====================================================
+// SCREEN
+// =====================================================
+
 export default function AddressScreen() {
   const router = useRouter();
 
@@ -57,6 +66,9 @@ export default function AddressScreen() {
 
   const [editingAddress, setEditingAddress] =
     useState<Address | null>(null);
+
+  const [defaultLoading, setDefaultLoading] =
+    useState<number | null>(null);
 
   const [form, setForm] =
     useState<FormData>(emptyForm);
@@ -85,6 +97,19 @@ export default function AddressScreen() {
       console.error('Get user error:', error);
       return null;
     }
+  };
+
+  // =====================================================
+  // CHECK DEFAULT ADDRESS
+  // =====================================================
+
+  const isDefaultAddress = (
+    address: Address
+  ): boolean => {
+    return (
+      address.is_default === true ||
+      Number(address.is_default) === 1
+    );
   };
 
   // =====================================================
@@ -134,6 +159,20 @@ export default function AddressScreen() {
   };
 
   // =====================================================
+  // SORT DEFAULT ADDRESS FIRST
+  // =====================================================
+
+  const sortAddresses = (
+    addressList: Address[]
+  ): Address[] => {
+    return [...addressList].sort(
+      (a, b) =>
+        Number(isDefaultAddress(b)) -
+        Number(isDefaultAddress(a))
+    );
+  };
+
+  // =====================================================
   // LOAD ADDRESSES
   // =====================================================
 
@@ -159,7 +198,7 @@ export default function AddressScreen() {
         JSON.stringify(data, null, 2)
       );
 
-      if (!response.ok) {
+      if (!response.ok || !data?.success) {
         throw new Error(
           data?.message ||
             'Failed to fetch addresses'
@@ -171,12 +210,19 @@ export default function AddressScreen() {
           ? data.addresses
           : [];
 
+      // Remove duplicates
       const uniqueAddresses =
         removeDuplicateAddresses(
           addressList
         );
 
-      setAddresses(uniqueAddresses);
+      // Default address first
+      const sortedAddresses =
+        sortAddresses(
+          uniqueAddresses
+        );
+
+      setAddresses(sortedAddresses);
     } catch (error) {
       console.error(
         'Load addresses error:',
@@ -358,6 +404,7 @@ export default function AddressScreen() {
 
     return addresses.some(
       (address) => {
+        // Don't compare address with itself
         if (
           editingAddress &&
           Number(address.id) ===
@@ -400,6 +447,7 @@ export default function AddressScreen() {
         return;
       }
 
+      // Check duplicate
       if (
         checkDuplicateAddress(form)
       ) {
@@ -413,16 +461,22 @@ export default function AddressScreen() {
 
       const payload = {
         user_id: userId,
+
         full_name:
           form.full_name.trim(),
+
         phone:
           form.phone.trim(),
+
         address_line:
           form.address_line.trim(),
+
         city:
           form.city.trim(),
+
         state:
           form.state.trim(),
+
         pincode:
           form.pincode.trim(),
       };
@@ -430,7 +484,7 @@ export default function AddressScreen() {
       let response: Response;
 
       // =================================================
-      // UPDATE
+      // UPDATE ADDRESS
       // =================================================
 
       if (editingAddress) {
@@ -453,7 +507,7 @@ export default function AddressScreen() {
       }
 
       // =================================================
-      // ADD
+      // ADD ADDRESS
       // =================================================
 
       else {
@@ -468,9 +522,13 @@ export default function AddressScreen() {
             },
 
             body:
-              JSON.stringify(
-                payload
-              ),
+              JSON.stringify({
+                ...payload,
+
+                // First address becomes default
+                is_default:
+                  addresses.length === 0,
+              }),
           }
         );
       }
@@ -488,6 +546,9 @@ export default function AddressScreen() {
         );
       }
 
+      const wasEditing =
+        Boolean(editingAddress);
+
       setModalVisible(false);
 
       setEditingAddress(null);
@@ -500,8 +561,10 @@ export default function AddressScreen() {
 
       Alert.alert(
         'Success',
-        editingAddress
+        wasEditing
           ? 'Address updated successfully.'
+          : addresses.length === 0
+          ? 'Address added as your default address.'
           : 'Address added successfully.'
       );
     } catch (error) {
@@ -518,6 +581,82 @@ export default function AddressScreen() {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  // =====================================================
+  // SET DEFAULT ADDRESS
+  // =====================================================
+
+  const setDefaultAddress = async (
+    addressId: number
+  ) => {
+    try {
+      const userId =
+        await getUserId();
+
+      if (!userId) {
+        Alert.alert(
+          'Login Required',
+          'Please login again to manage your addresses.'
+        );
+
+        return;
+      }
+
+      setDefaultLoading(addressId);
+
+      const response =
+        await fetch(
+          `${API_BASE_URL}/api/addresses/${addressId}/default`,
+          {
+            method: 'PUT',
+
+            headers: {
+              'Content-Type':
+                'application/json',
+            },
+
+            body:
+              JSON.stringify({
+                user_id: userId,
+              }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (
+        !response.ok ||
+        !data?.success
+      ) {
+        throw new Error(
+          data?.message ||
+            'Failed to set default address'
+        );
+      }
+
+      await loadAddresses();
+
+      Alert.alert(
+        'Success',
+        'Default address updated successfully.'
+      );
+    } catch (error) {
+      console.error(
+        'Set default address error:',
+        error
+      );
+
+      Alert.alert(
+        'Error',
+        error instanceof Error
+          ? error.message
+          : 'Unable to set default address.'
+      );
+    } finally {
+      setDefaultLoading(null);
     }
   };
 
@@ -547,6 +686,11 @@ export default function AddressScreen() {
                 await getUserId();
 
               if (!userId) {
+                Alert.alert(
+                  'Login Required',
+                  'Please login again.'
+                );
+
                 return;
               }
 
@@ -628,7 +772,7 @@ export default function AddressScreen() {
             styles.loadingText
           }
         >
-          Loading addresses...
+          Loading your addresses...
         </Text>
       </View>
     );
@@ -639,12 +783,16 @@ export default function AddressScreen() {
   // =====================================================
 
   return (
-    <View style={styles.container}>
+    <View
+      style={styles.container}
+    >
+      {/* =================================================
+          HEADER
+      ================================================= */}
 
-      {/* HEADER */}
-
-      <View style={styles.header}>
-
+      <View
+        style={styles.header}
+      >
         <TouchableOpacity
           style={
             styles.backButton
@@ -662,17 +810,33 @@ export default function AddressScreen() {
           </Text>
         </TouchableOpacity>
 
-        <Text
-          style={styles.title}
+        <View
+          style={
+            styles.headerTitleContainer
+          }
         >
-          My Addresses
-        </Text>
+          <Text
+            style={
+              styles.headerSmallTitle
+            }
+          >
+            ACCOUNT
+          </Text>
+
+          <Text
+            style={styles.title}
+          >
+            My Addresses
+          </Text>
+        </View>
 
         <TouchableOpacity
           style={
             styles.addHeaderButton
           }
-          onPress={openAddForm}
+          onPress={
+            openAddForm
+          }
         >
           <Text
             style={
@@ -682,10 +846,11 @@ export default function AddressScreen() {
             +
           </Text>
         </TouchableOpacity>
-
       </View>
 
-      {/* CONTENT */}
+      {/* =================================================
+          CONTENT
+      ================================================= */}
 
       <ScrollView
         contentContainerStyle={
@@ -696,7 +861,6 @@ export default function AddressScreen() {
         }
         keyboardShouldPersistTaps="handled"
       >
-
         {/* INFO */}
 
         <View
@@ -729,7 +893,8 @@ export default function AddressScreen() {
               }
             >
               Manage your saved delivery
-              addresses from here.
+              addresses for faster
+              checkout.
             </Text>
           </View>
         </View>
@@ -740,7 +905,9 @@ export default function AddressScreen() {
           style={
             styles.addButton
           }
-          onPress={openAddForm}
+          onPress={
+            openAddForm
+          }
           activeOpacity={0.8}
         >
           <Text
@@ -752,10 +919,11 @@ export default function AddressScreen() {
           </Text>
         </TouchableOpacity>
 
-        {/* EMPTY */}
+        {/* =================================================
+            EMPTY STATE
+        ================================================= */}
 
         {addresses.length === 0 ? (
-
           <View
             style={
               styles.emptyContainer
@@ -766,7 +934,7 @@ export default function AddressScreen() {
                 styles.emptyIcon
               }
             >
-              📦
+              🏠
             </Text>
 
             <Text
@@ -782,8 +950,9 @@ export default function AddressScreen() {
                 styles.emptyText
               }
             >
-              Add your first delivery address
-              to make checkout faster.
+              Add your first delivery
+              address to make checkout
+              faster.
             </Text>
 
             <TouchableOpacity
@@ -803,154 +972,336 @@ export default function AddressScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-
         ) : (
-
           <>
-            <Text
+            {/* COUNT */}
+
+            <View
               style={
-                styles.countText
+                styles.sectionHeading
               }
             >
-              {addresses.length}{' '}
-              {addresses.length === 1
-                ? 'address'
-                : 'addresses'}{' '}
-              saved
-            </Text>
-
-            {addresses.map(
-              (address) => (
-
-                <View
-                  key={address.id}
+              <View>
+                <Text
                   style={
-                    styles.addressCard
+                    styles.sectionTitle
                   }
                 >
+                  Saved Addresses
+                </Text>
 
+                <Text
+                  style={
+                    styles.countText
+                  }
+                >
+                  {addresses.length}{' '}
+                  {addresses.length ===
+                  1
+                    ? 'address'
+                    : 'addresses'}{' '}
+                  saved
+                </Text>
+              </View>
+            </View>
+
+            {/* =================================================
+                ADDRESS LIST
+            ================================================= */}
+
+            {addresses.map(
+              (address) => {
+                const isDefault =
+                  isDefaultAddress(
+                    address
+                  );
+
+                return (
                   <View
-                    style={
-                      styles.addressHeader
+                    key={
+                      address.id
                     }
+                    style={[
+                      styles.addressCard,
+                      isDefault &&
+                        styles.defaultAddressCard,
+                    ]}
                   >
+                    {/* CARD TOP */}
 
                     <View
                       style={
-                        styles.locationCircle
+                        styles.addressHeader
+                      }
+                    >
+                      <View
+                        style={
+                          styles.locationCircle
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.locationIcon
+                          }
+                        >
+                          🏠
+                        </Text>
+                      </View>
+
+                      <View
+                        style={
+                          styles.headerInfo
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.name
+                          }
+                        >
+                          {
+                            address.full_name
+                          }
+                        </Text>
+
+                        <Text
+                          style={
+                            styles.phone
+                          }
+                        >
+                          ☎{' '}
+                          {
+                            address.phone
+                          }
+                        </Text>
+                      </View>
+
+                      {/* DEFAULT BADGE */}
+
+                      {isDefault && (
+                        <View
+                          style={
+                            styles.defaultBadge
+                          }
+                        >
+                          <Text
+                            style={
+                              styles.defaultBadgeText
+                            }
+                          >
+                            ⭐ Default
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+
+                    {/* ADDRESS */}
+
+                    <View
+                      style={
+                        styles.addressContent
                       }
                     >
                       <Text
                         style={
-                          styles.locationIcon
+                          styles.addressLocationIcon
                         }
                       >
                         📍
                       </Text>
+
+                      <Text
+                        style={
+                          styles.addressLine
+                        }
+                      >
+                        {
+                          address.address_line
+                        }
+                      </Text>
                     </View>
+
+                    {/* CITY / STATE / PIN */}
 
                     <View
                       style={
-                        styles.headerInfo
+                        styles.addressTags
                       }
                     >
-                      <Text
+                      <View
                         style={
-                          styles.name
+                          styles.addressTag
                         }
                       >
-                        {address.full_name}
-                      </Text>
+                        <Text
+                          style={
+                            styles.addressTagText
+                          }
+                        >
+                          🏙{' '}
+                          {
+                            address.city
+                          }
+                        </Text>
+                      </View>
 
-                      <Text
+                      <View
                         style={
-                          styles.phone
+                          styles.addressTag
                         }
                       >
-                        {address.phone}
-                      </Text>
+                        <Text
+                          style={
+                            styles.addressTagText
+                          }
+                        >
+                          🗺{' '}
+                          {
+                            address.state
+                          }
+                        </Text>
+                      </View>
+
+                      <View
+                        style={
+                          styles.addressTag
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.addressTagText
+                          }
+                        >
+                          📌{' '}
+                          {
+                            address.pincode
+                          }
+                        </Text>
+                      </View>
                     </View>
 
-                  </View>
+                    {/* DEFAULT MESSAGE */}
 
-                  <Text
-                    style={
-                      styles.addressLine
-                    }
-                  >
-                    {address.address_line}
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.cityLine
-                    }
-                  >
-                    {address.city},{' '}
-                    {address.state}
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.pincode
-                    }
-                  >
-                    Pincode:{' '}
-                    {address.pincode}
-                  </Text>
-
-                  <View
-                    style={
-                      styles.actionsRow
-                    }
-                  >
-
-                    <TouchableOpacity
-                      style={
-                        styles.editButton
-                      }
-                      onPress={() =>
-                        openEditForm(
-                          address
-                        )
-                      }
-                    >
-                      <Text
+                    {isDefault && (
+                      <View
                         style={
-                          styles.editText
+                          styles.defaultMessage
                         }
                       >
-                        ✏️ Edit
-                      </Text>
-                    </TouchableOpacity>
+                        <Text
+                          style={
+                            styles.defaultCheck
+                          }
+                        >
+                          ✓
+                        </Text>
 
-                    <TouchableOpacity
+                        <Text
+                          style={
+                            styles.defaultMessageText
+                          }
+                        >
+                          This is your
+                          default delivery
+                          address.
+                        </Text>
+                      </View>
+                    )}
+
+                    {/* ACTIONS */}
+
+                    <View
                       style={
-                        styles.deleteButton
-                      }
-                      onPress={() =>
-                        deleteAddress(
-                          address
-                        )
+                        styles.actionsRow
                       }
                     >
-                      <Text
+                      {/* EDIT */}
+
+                      <TouchableOpacity
                         style={
-                          styles.deleteText
+                          styles.editButton
+                        }
+                        onPress={() =>
+                          openEditForm(
+                            address
+                          )
+                        }
+                        disabled={
+                          saving
                         }
                       >
-                        🗑 Delete
-                      </Text>
-                    </TouchableOpacity>
+                        <Text
+                          style={
+                            styles.editText
+                          }
+                        >
+                          ✏ Edit
+                        </Text>
+                      </TouchableOpacity>
 
+                      {/* DELETE */}
+
+                      <TouchableOpacity
+                        style={
+                          styles.deleteButton
+                        }
+                        onPress={() =>
+                          deleteAddress(
+                            address
+                          )
+                        }
+                      >
+                        <Text
+                          style={
+                            styles.deleteText
+                          }
+                        >
+                          🗑 Delete
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {/* SET DEFAULT */}
+
+                    {!isDefault && (
+                      <TouchableOpacity
+                        style={
+                          styles.setDefaultButton
+                        }
+                        onPress={() =>
+                          setDefaultAddress(
+                            address.id
+                          )
+                        }
+                        disabled={
+                          defaultLoading ===
+                          address.id
+                        }
+                        activeOpacity={
+                          0.8
+                        }
+                      >
+                        {defaultLoading ===
+                        address.id ? (
+                          <ActivityIndicator
+                            size="small"
+                            color="#7c3aed"
+                          />
+                        ) : (
+                          <Text
+                            style={
+                              styles.setDefaultText
+                            }
+                          >
+                            ☆ Set as Default
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    )}
                   </View>
-
-                </View>
-
-              )
+                );
+              }
             )}
           </>
-
         )}
 
         <View
@@ -958,7 +1309,6 @@ export default function AddressScreen() {
             height: 35,
           }}
         />
-
       </ScrollView>
 
       {/* =================================================
@@ -966,37 +1316,36 @@ export default function AddressScreen() {
       ================================================= */}
 
       <Modal
-        visible={modalVisible}
+        visible={
+          modalVisible
+        }
         animationType="slide"
         transparent
         onRequestClose={
           closeForm
         }
       >
-
         <KeyboardAvoidingView
           style={
             styles.modalKeyboardContainer
           }
           behavior={
-            Platform.OS === 'ios'
+            Platform.OS ===
+            'ios'
               ? 'padding'
               : 'height'
           }
         >
-
           <View
             style={
               styles.modalOverlay
             }
           >
-
             <View
               style={
                 styles.modalContainer
               }
             >
-
               {/* MODAL HEADER */}
 
               <View
@@ -1004,22 +1353,33 @@ export default function AddressScreen() {
                   styles.modalHeader
                 }
               >
+                <View>
+                  <Text
+                    style={
+                      styles.modalSmallTitle
+                    }
+                  >
+                    ADDRESS
+                  </Text>
 
-                <Text
-                  style={
-                    styles.modalTitle
-                  }
-                >
-                  {editingAddress
-                    ? 'Edit Address'
-                    : 'Add New Address'}
-                </Text>
+                  <Text
+                    style={
+                      styles.modalTitle
+                    }
+                  >
+                    {editingAddress
+                      ? 'Edit Address'
+                      : 'New Address'}
+                  </Text>
+                </View>
 
                 <TouchableOpacity
                   onPress={
                     closeForm
                   }
-                  disabled={saving}
+                  disabled={
+                    saving
+                  }
                 >
                   <Text
                     style={
@@ -1029,10 +1389,9 @@ export default function AddressScreen() {
                     ×
                   </Text>
                 </TouchableOpacity>
-
               </View>
 
-              {/* FORM SCROLL */}
+              {/* FORM */}
 
               <ScrollView
                 style={
@@ -1047,7 +1406,6 @@ export default function AddressScreen() {
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode="on-drag"
               >
-
                 {/* FULL NAME */}
 
                 <Text
@@ -1056,13 +1414,20 @@ export default function AddressScreen() {
                   }
                 >
                   Full Name
+                  <Text
+                    style={
+                      styles.required
+                    }
+                  >
+                    {' '}*
+                  </Text>
                 </Text>
 
                 <TextInput
                   style={
                     styles.input
                   }
-                  placeholder="Enter full name"
+                  placeholder="Enter your full name"
                   placeholderTextColor="#999"
                   value={
                     form.full_name
@@ -1075,7 +1440,9 @@ export default function AddressScreen() {
                       value
                     )
                   }
-                  editable={!saving}
+                  editable={
+                    !saving
+                  }
                 />
 
                 {/* PHONE */}
@@ -1086,13 +1453,20 @@ export default function AddressScreen() {
                   }
                 >
                   Phone Number
+                  <Text
+                    style={
+                      styles.required
+                    }
+                  >
+                    {' '}*
+                  </Text>
                 </Text>
 
                 <TextInput
                   style={
                     styles.input
                   }
-                  placeholder="Enter 10-digit phone number"
+                  placeholder="10-digit mobile number"
                   placeholderTextColor="#999"
                   value={
                     form.phone
@@ -1110,7 +1484,9 @@ export default function AddressScreen() {
                   }
                   keyboardType="phone-pad"
                   maxLength={10}
-                  editable={!saving}
+                  editable={
+                    !saving
+                  }
                 />
 
                 {/* ADDRESS */}
@@ -1121,6 +1497,13 @@ export default function AddressScreen() {
                   }
                 >
                   Address
+                  <Text
+                    style={
+                      styles.required
+                    }
+                  >
+                    {' '}*
+                  </Text>
                 </Text>
 
                 <TextInput
@@ -1128,7 +1511,7 @@ export default function AddressScreen() {
                     styles.input,
                     styles.multilineInput,
                   ]}
-                  placeholder="House no, street, area"
+                  placeholder="House No, Street, Area, Landmark"
                   placeholderTextColor="#999"
                   value={
                     form.address_line
@@ -1142,7 +1525,9 @@ export default function AddressScreen() {
                     )
                   }
                   multiline
-                  editable={!saving}
+                  editable={
+                    !saving
+                  }
                 />
 
                 {/* CITY */}
@@ -1153,6 +1538,13 @@ export default function AddressScreen() {
                   }
                 >
                   City
+                  <Text
+                    style={
+                      styles.required
+                    }
+                  >
+                    {' '}*
+                  </Text>
                 </Text>
 
                 <TextInput
@@ -1172,7 +1564,9 @@ export default function AddressScreen() {
                       value
                     )
                   }
-                  editable={!saving}
+                  editable={
+                    !saving
+                  }
                 />
 
                 {/* STATE */}
@@ -1183,6 +1577,13 @@ export default function AddressScreen() {
                   }
                 >
                   State
+                  <Text
+                    style={
+                      styles.required
+                    }
+                  >
+                    {' '}*
+                  </Text>
                 </Text>
 
                 <TextInput
@@ -1202,7 +1603,9 @@ export default function AddressScreen() {
                       value
                     )
                   }
-                  editable={!saving}
+                  editable={
+                    !saving
+                  }
                 />
 
                 {/* PINCODE */}
@@ -1212,14 +1615,21 @@ export default function AddressScreen() {
                     styles.inputLabel
                   }
                 >
-                  Pincode
+                  PIN Code
+                  <Text
+                    style={
+                      styles.required
+                    }
+                  >
+                    {' '}*
+                  </Text>
                 </Text>
 
                 <TextInput
                   style={
                     styles.input
                   }
-                  placeholder="Enter 6-digit pincode"
+                  placeholder="6-digit PIN code"
                   placeholderTextColor="#999"
                   value={
                     form.pincode
@@ -1237,7 +1647,9 @@ export default function AddressScreen() {
                   }
                   keyboardType="number-pad"
                   maxLength={6}
-                  editable={!saving}
+                  editable={
+                    !saving
+                  }
                 />
 
                 {/* SAVE */}
@@ -1251,18 +1663,18 @@ export default function AddressScreen() {
                   onPress={
                     saveAddress
                   }
-                  disabled={saving}
-                  activeOpacity={0.8}
+                  disabled={
+                    saving
+                  }
+                  activeOpacity={
+                    0.8
+                  }
                 >
-
                   {saving ? (
-
                     <ActivityIndicator
                       color="#fff"
                     />
-
                   ) : (
-
                     <Text
                       style={
                         styles.saveButtonText
@@ -1270,31 +1682,35 @@ export default function AddressScreen() {
                     >
                       {editingAddress
                         ? 'Update Address'
-                        : 'Save Address'}
+                        : '💾 Save Address'}
                     </Text>
-
                   )}
-
                 </TouchableOpacity>
 
-                {/* KEYBOARD EXTRA SPACE */}
+                {/* NOTE */}
+
+                {!editingAddress && (
+                  <Text
+                    style={
+                      styles.formNote
+                    }
+                  >
+                    Your first saved address
+                    will automatically become
+                    your default address.
+                  </Text>
+                )}
 
                 <View
                   style={{
                     height: 100,
                   }}
                 />
-
               </ScrollView>
-
             </View>
-
           </View>
-
         </KeyboardAvoidingView>
-
       </Modal>
-
     </View>
   );
 }
@@ -1304,6 +1720,9 @@ export default function AddressScreen() {
 // =====================================================
 
 const styles = StyleSheet.create({
+  // ===================================================
+  // MAIN
+  // ===================================================
 
   container: {
     flex: 1,
@@ -1350,6 +1769,19 @@ const styles = StyleSheet.create({
     fontSize: 32,
     color: '#222',
     marginTop: -4,
+  },
+
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+
+  headerSmallTitle: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    color: '#7c3aed',
+    marginBottom: 2,
   },
 
   title: {
@@ -1421,7 +1853,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#7c3aed',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: 20,
   },
 
   addButtonText: {
@@ -1430,10 +1862,20 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
-  countText: {
-    fontSize: 14,
-    color: '#777',
+  sectionHeading: {
     marginBottom: 12,
+  },
+
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#181818',
+  },
+
+  countText: {
+    marginTop: 4,
+    fontSize: 13,
+    color: '#777',
   },
 
   // ===================================================
@@ -1445,6 +1887,24 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
+
+    borderWidth: 1,
+    borderColor: '#eeeeee',
+
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+
+    elevation: 2,
+  },
+
+  defaultAddressCard: {
+    borderColor: '#c4b5fd',
+    borderWidth: 1.5,
   },
 
   addressHeader: {
@@ -1482,24 +1942,107 @@ const styles = StyleSheet.create({
     color: '#777',
   },
 
-  addressLine: {
+  // ===================================================
+  // DEFAULT BADGE
+  // ===================================================
+
+  defaultBadge: {
+    backgroundColor: '#ede9fe',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+
+  defaultBadgeText: {
+    color: '#6d28d9',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  // ===================================================
+  // ADDRESS CONTENT
+  // ===================================================
+
+  addressContent: {
+    flexDirection: 'row',
     marginTop: 16,
+  },
+
+  addressLocationIcon: {
+    fontSize: 17,
+    marginRight: 7,
+    marginTop: 1,
+  },
+
+  addressLine: {
+    flex: 1,
     fontSize: 14,
     lineHeight: 21,
     color: '#333',
   },
 
-  cityLine: {
-    marginTop: 5,
-    fontSize: 14,
-    color: '#444',
+  // ===================================================
+  // ADDRESS TAGS
+  // ===================================================
+
+  addressTags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 12,
+    gap: 7,
   },
 
-  pincode: {
-    marginTop: 4,
-    fontSize: 13,
-    color: '#777',
+  addressTag: {
+    backgroundColor: '#f7f7f7',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
+
+  addressTagText: {
+    fontSize: 11,
+    color: '#555',
+    fontWeight: '600',
+  },
+
+  // ===================================================
+  // DEFAULT MESSAGE
+  // ===================================================
+
+  defaultMessage: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f3ff',
+    borderRadius: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    marginTop: 13,
+  },
+
+  defaultCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#7c3aed',
+    color: '#ffffff',
+    textAlign: 'center',
+    lineHeight: 20,
+    fontSize: 12,
+    fontWeight: '800',
+    marginRight: 8,
+  },
+
+  defaultMessageText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#5b21b6',
+    fontWeight: '600',
+  },
+
+  // ===================================================
+  // ACTIONS
+  // ===================================================
 
   actionsRow: {
     flexDirection: 'row',
@@ -1535,6 +2078,28 @@ const styles = StyleSheet.create({
 
   deleteText: {
     color: '#dc2626',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  // ===================================================
+  // SET DEFAULT
+  // ===================================================
+
+  setDefaultButton: {
+    width: '100%',
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#f5f3ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+
+  setDefaultText: {
+    color: '#7c3aed',
     fontSize: 13,
     fontWeight: '800',
   },
@@ -1584,7 +2149,7 @@ const styles = StyleSheet.create({
   },
 
   // ===================================================
-  // MODAL KEYBOARD
+  // MODAL
   // ===================================================
 
   modalKeyboardContainer: {
@@ -1598,15 +2163,15 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
 
- modalContainer: {
-  backgroundColor: '#ffffff',
-  borderTopLeftRadius: 24,
-  borderTopRightRadius: 24,
-  paddingHorizontal: 20,
-  paddingTop: 18,
-  height: '85%',
-  maxHeight: '92%',
-},
+  modalContainer: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    height: '85%',
+    maxHeight: '92%',
+  },
 
   modalScroll: {
     flex: 1,
@@ -1625,6 +2190,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 15,
+  },
+
+  modalSmallTitle: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    color: '#7c3aed',
+    marginBottom: 2,
   },
 
   modalTitle: {
@@ -1649,6 +2222,10 @@ const styles = StyleSheet.create({
     color: '#333',
     marginBottom: 6,
     marginTop: 10,
+  },
+
+  required: {
+    color: '#ef4444',
   },
 
   input: {
@@ -1693,4 +2270,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 
+  // ===================================================
+  // FORM NOTE
+  // ===================================================
+
+  formNote: {
+    marginTop: 12,
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#777',
+    textAlign: 'center',
+    paddingHorizontal: 15,
+  },
 });

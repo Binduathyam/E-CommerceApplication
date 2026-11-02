@@ -1,3 +1,4 @@
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React from 'react';
@@ -26,8 +27,7 @@ export default function ProfileScreen() {
   // CART
   // =====================================================
 
-  const { clearLocalCart } =
-    useCart();
+  const { clearLocalCart } = useCart();
 
   // =====================================================
   // USER STATE
@@ -99,13 +99,6 @@ export default function ProfileScreen() {
               // -----------------------------------------
               // CLEAR LOCAL CART ONLY
               // -----------------------------------------
-              //
-              // IMPORTANT:
-              // This does NOT delete cart from MySQL.
-              //
-              // When the same user logs in again,
-              // their cart will be loaded from backend.
-              // -----------------------------------------
 
               clearLocalCart();
 
@@ -167,7 +160,10 @@ export default function ProfileScreen() {
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
+
+      {/* =================================================
+          HEADER
+          ================================================= */}
 
       <View style={styles.header}>
         <TouchableOpacity
@@ -202,6 +198,7 @@ export default function ProfileScreen() {
           false
         }
       >
+
         {/* =================================================
             PROFILE
             ================================================= */}
@@ -261,6 +258,7 @@ export default function ProfileScreen() {
         </Text>
 
         <View style={styles.menuCard}>
+
           {/* MY ORDERS */}
 
           <TouchableOpacity
@@ -363,6 +361,7 @@ export default function ProfileScreen() {
         </Text>
 
         <View style={styles.menuCard}>
+
           {/* MY ADDRESSES */}
 
           <TouchableOpacity
@@ -418,15 +417,16 @@ export default function ProfileScreen() {
         </Text>
 
         <View style={styles.menuCard}>
+
           {/* SETTINGS */}
 
           <TouchableOpacity
             style={styles.menuItem}
             onPress={() =>
-  router.push(
-    "/account-settings" as any
-  )
-}
+              router.push(
+                '/account-settings' as any
+              )
+            }
           >
             <View
               style={styles.iconBox}
@@ -460,11 +460,306 @@ export default function ProfileScreen() {
               ›
             </Text>
           </TouchableOpacity>
+        </View>
+
+        {/* =================================================
+            HELP & SUPPORT
+            ================================================= */}
+
+        <Text
+          style={styles.sectionTitle}
+        >
+          Help & Support
+        </Text>
+
+        <View style={styles.menuCard}>
+
+          {/* HELP & SUPPORT */}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push(
+                '/help-support' as any
+              )
+            }
+          >
+            <View
+              style={styles.iconBox}
+            >
+              <Text style={styles.icon}>
+                🆘
+              </Text>
+            </View>
+
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
+                Help & Support
+              </Text>
+
+              <Text
+                style={
+                  styles.menuSubtitle
+                }
+              >
+                Get help with your account and orders
+              </Text>
+            </View>
+
+            <Text
+              style={styles.arrow}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
 
           <View
             style={styles.divider}
           />
 
+          {/* RETURNS & REFUNDS */}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push(
+                '/returns-refunds' as any
+              )
+            }
+          >
+            <View
+              style={styles.iconBox}
+            >
+              <Text style={styles.icon}>
+                ↩️
+              </Text>
+            </View>
+
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
+                Returns & Refunds
+              </Text>
+
+              <Text
+                style={
+                  styles.menuSubtitle
+                }
+              >
+                Learn about returns and refunds
+              </Text>
+            </View>
+
+            <Text
+              style={styles.arrow}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* =================================================
+            COMPANY
+            ================================================= */}
+
+        <Text
+          style={styles.sectionTitle}
+        >
+          Company
+        </Text>
+
+        <View style={styles.menuCard}>
+
+          {/* ABOUT US */}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push(
+                '/about-us' as any
+              )
+            }
+          >
+            <View
+              style={styles.iconBox}
+            >
+              <Text style={styles.icon}>
+                ℹ️
+              </Text>
+            </View>
+
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
+                About Us
+              </Text>
+
+              <Text
+                style={
+                  styles.menuSubtitle
+                }
+              >
+                Learn more about ShopEase
+              </Text>
+            </View>
+
+            <Text
+              style={styles.arrow}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
+
+          <View
+            style={styles.divider}
+          />
+
+          {/* CONTACT US */}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push(
+                '/contact-us' as any
+              )
+            }
+          >
+            <View
+              style={styles.iconBox}
+            >
+              <Text style={styles.icon}>
+                📞
+              </Text>
+            </View>
+
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
+                Contact Us
+              </Text>
+
+              <Text
+                style={
+                  styles.menuSubtitle
+                }
+              >
+                Get in touch with us
+              </Text>
+            </View>
+
+            <Text
+              style={styles.arrow}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
+
+          <View
+            style={styles.divider}
+          />
+
+          {/* PRIVACY POLICY */}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push(
+                '/privacy-policy' as any
+              )
+            }
+          >
+            <View
+              style={styles.iconBox}
+            >
+              <Text style={styles.icon}>
+                🔒
+              </Text>
+            </View>
+
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
+                Privacy Policy
+              </Text>
+
+              <Text
+                style={
+                  styles.menuSubtitle
+                }
+              >
+                Learn how we protect your data
+              </Text>
+            </View>
+
+            <Text
+              style={styles.arrow}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
+
+          <View
+            style={styles.divider}
+          />
+
+          {/* TERMS & CONDITIONS */}
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() =>
+              router.push(
+                '/terms-conditions' as any
+              )
+            }
+          >
+            <View
+              style={styles.iconBox}
+            >
+              <Text style={styles.icon}>
+                📄
+              </Text>
+            </View>
+
+            <View
+              style={styles.menuInfo}
+            >
+              <Text
+                style={styles.menuTitle}
+              >
+                Terms & Conditions
+              </Text>
+
+              <Text
+                style={
+                  styles.menuSubtitle
+                }
+              >
+                Read our terms and conditions
+              </Text>
+            </View>
+
+            <Text
+              style={styles.arrow}
+            >
+              ›
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* =================================================
@@ -489,6 +784,7 @@ export default function ProfileScreen() {
         >
           ShopEase v1.0.0
         </Text>
+
       </ScrollView>
     </View>
   );

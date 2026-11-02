@@ -1,11 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  Image,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -19,6 +18,8 @@ import RazorpayCheckout from 'react-native-razorpay';
 import { API_BASE_URL } from '../../config/api';
 import { useCart } from '../../context/CartContext';
 
+const ADDRESSES_ROUTE = '/addresses';
+
 type Address = {
   id: number;
   user_id: number;
@@ -30,61 +31,217 @@ type Address = {
   pincode: string;
 };
 
+type Errors = {
+  general?: string;
+  email?: string;
+};
+
+type PaymentMethod = 'cod' | 'online';
+
+// =====================================================
+// HELPERS
+// =====================================================
+
+const getProductId = (item: any) =>
+  Number(item?.product_id ?? item?.productId ?? item?.id ?? 0);
+
+const getVariantId = (item: any) =>
+  item?.variant_id ?? item?.variantId ?? item?.variant?.id ?? null;
+
+const getGstRate = (item: any) =>
+  Number(item?.gst_rate ?? item?.gstRate ?? 0);
+
+const money = (value: number, decimals = false) =>
+  value.toLocaleString(
+    'en-IN',
+    decimals
+      ? {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }
+      : undefined
+  );
+
+// =====================================================
+// NORMALIZE ADDRESS
+// =====================================================
+
+const normalizeAddress = (raw: any): Address | null => {
+  if (!raw) return null;
+
+  const addressId = Number(
+    raw?.id ??
+      raw?.address_id ??
+      raw?.addressId ??
+      0
+  );
+
+  if (!addressId) {
+    console.log('ADDRESS WITHOUT ID:', raw);
+  }
+
+  return {
+    id: addressId,
+
+    user_id: Number(
+      raw?.user_id ??
+        raw?.userId ??
+        0
+    ),
+
+    full_name:
+      raw?.full_name ??
+      raw?.fullName ??
+      raw?.name ??
+      '',
+
+    phone:
+      raw?.phone ??
+      raw?.mobile ??
+      raw?.phone_number ??
+      '',
+
+    address_line:
+      raw?.address_line ??
+      raw?.addressLine ??
+      raw?.address ??
+      raw?.street ??
+      '',
+
+    city:
+      raw?.city ??
+      '',
+
+    state:
+      raw?.state ??
+      '',
+
+    pincode:
+      raw?.pincode ??
+      raw?.pin_code ??
+      raw?.postal_code ??
+      raw?.postalCode ??
+      '',
+  };
+};
+
+// =====================================================
+// MAIN SCREEN
+// =====================================================
+
 export default function CheckoutScreen() {
   const router = useRouter();
 
-  const { cartItems, cartTotal, clearCart } = useCart();
+  const {
+    cartItems,
+    clearCart,
+    buyNowItem,
+    clearBuyNow,
+  } = useCart();
+
+  const isBuyNow = !!buyNowItem;
 
   // =====================================================
-  // ADDRESS
+  // CLEAN BUY NOW
   // =====================================================
 
-  const [addresses, setAddresses] = useState<Address[]>([]);
-  const [selectedAddressId, setSelectedAddressId] =
-    useState<number | null>(null);
+  useEffect(() => {
+    return () => {
+      clearBuyNow();
+    };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // =====================================================
+  // STATES
+  // =====================================================
+
+  const [defaultAddress, setDefaultAddress] =
+    useState<Address | null>(null);
 
   const [addressLoading, setAddressLoading] =
     useState(true);
 
-  const [addAddressVisible, setAddAddressVisible] =
-    useState(false);
-
-  const [savingAddress, setSavingAddress] =
-    useState(false);
-
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
-  const [city, setCity] = useState('');
-  const [state, setState] = useState('Tamil Nadu');
-  const [pincode, setPincode] = useState('');
-
-  // =====================================================
-  // PAYMENT
-  // =====================================================
-
   const [paymentMethod, setPaymentMethod] =
-    useState<'Cash on Delivery' | 'Razorpay'>(
-      'Cash on Delivery'
-    );
+    useState<PaymentMethod>('cod');
 
-  const [processing, setProcessing] =
+  const [loading, setLoading] =
     useState(false);
 
+  const [errors, setErrors] =
+    useState<Errors>({});
+
+  const [email, setEmail] =
+    useState('');
+
   // =====================================================
-  // GET USER
+  // SAFE CART
+  // =====================================================
+
+  const safeCart: any[] = buyNowItem
+    ? [buyNowItem]
+    : Array.isArray(cartItems)
+    ? cartItems
+    : [];
+
+  // =====================================================
+  // TOTALS
+  // =====================================================
+
+  const subtotal = safeCart.reduce((sum, item) => {
+    const price = Number(item?.price || 0);
+    const quantity = Number(item?.quantity || 1);
+
+    return sum + price * quantity;
+  }, 0);
+
+  const gstAmount = safeCart.reduce((sum, item) => {
+    const price = Number(item?.price || 0);
+    const quantity = Number(item?.quantity || 1);
+    const gstRate = getGstRate(item);
+
+    return sum + (price * quantity * gstRate) / 100;
+  }, 0);
+
+  const deliveryFee =
+    subtotal >= 999 ? 0 : 40;
+
+  const platformFee =
+    subtotal > 0 ? 10 : 0;
+
+  const total = Math.max(
+    0,
+    subtotal +
+      gstAmount +
+      deliveryFee +
+      platformFee
+  );
+
+  // =====================================================
+  // USER
   // =====================================================
 
   const getUser = async () => {
-    const storedUser =
-      await AsyncStorage.getItem('loggedInUser');
-
-    if (!storedUser) {
-      return null;
-    }
-
     try {
-      const user = JSON.parse(storedUser);
+      const stored =
+        await AsyncStorage.getItem('loggedInUser');
+
+      console.log(
+        'CHECKOUT loggedInUser:',
+        stored
+      );
+
+      if (!stored) {
+        return null;
+      }
+
+      const user = JSON.parse(stored);
+
+      console.log(
+        'CHECKOUT USER:',
+        user
+      );
 
       if (!user?.id) {
         return null;
@@ -93,7 +250,7 @@ export default function CheckoutScreen() {
       return user;
     } catch (error) {
       console.error(
-        'GET USER PARSE ERROR:',
+        'GET USER ERROR:',
         error
       );
 
@@ -102,303 +259,311 @@ export default function CheckoutScreen() {
   };
 
   // =====================================================
-  // GET AUTH TOKEN
+  // TOKEN
   // =====================================================
 
   const getAuthToken = async () => {
-    const token =
-      await AsyncStorage.getItem('authToken');
-
-    if (!token) {
-      return null;
-    }
-
-    return token;
-  };
-
-  // =====================================================
-  // NORMALIZE ADDRESS
-  // =====================================================
-
-  const normalizeAddressValue = (
-    value: unknown
-  ) => {
-    return String(value || '')
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, ' ');
-  };
-
-  // =====================================================
-  // REMOVE DUPLICATE ADDRESSES
-  // =====================================================
-
-  const removeDuplicateAddresses = (
-    list: Address[]
-  ) => {
-    const uniqueAddresses: Address[] = [];
-    const seen = new Set<string>();
-
-    for (const item of list) {
-      const uniqueKey = [
-        normalizeAddressValue(item.full_name),
-        normalizeAddressValue(item.phone),
-        normalizeAddressValue(item.address_line),
-        normalizeAddressValue(item.city),
-        normalizeAddressValue(item.state),
-        normalizeAddressValue(item.pincode),
-      ].join('|');
-
-      if (!seen.has(uniqueKey)) {
-        seen.add(uniqueKey);
-        uniqueAddresses.push(item);
-      }
-    }
-
-    return uniqueAddresses;
-  };
-
-  // =====================================================
-  // LOAD SAVED ADDRESSES
-  // =====================================================
-
-  const loadAddresses = async () => {
     try {
-      setAddressLoading(true);
-
-      const user = await getUser();
-
-      if (!user) {
-        Alert.alert(
-          'Login Required',
-          'Please login before checkout.'
-        );
-        return;
-      }
-
-      const token = await getAuthToken();
-
-      if (!token) {
-        Alert.alert(
-          'Login Required',
-          'Your login session has expired. Please login again.'
-        );
-        return;
-      }
-
-      const response = await fetch(
-        `${API_BASE_URL}/api/addresses/${user.id}`,
-        {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'x-user-id': String(user.id),
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      const data = await response.json();
+      const token =
+        await AsyncStorage.getItem('authToken');
 
       console.log(
-        'CHECKOUT ADDRESSES RESPONSE:',
-        data
+        'CHECKOUT TOKEN EXISTS:',
+        !!token
       );
 
-      if (!response.ok || !data?.success) {
-        throw new Error(
-          data?.message ||
-            'Failed to load addresses'
-        );
-      }
-
-      const list = Array.isArray(
-        data.addresses
-      )
-        ? data.addresses
-        : [];
-
-      const uniqueAddresses =
-        removeDuplicateAddresses(list);
-
-      console.log(
-        'UNIQUE CHECKOUT ADDRESSES:',
-        uniqueAddresses
-      );
-
-      setAddresses(uniqueAddresses);
-
-      if (
-        selectedAddressId !== null &&
-        uniqueAddresses.some(
-          (item) =>
-            Number(item.id) ===
-            Number(selectedAddressId)
-        )
-      ) {
-        return;
-      }
-
-      if (uniqueAddresses.length > 0) {
-        setSelectedAddressId(
-          Number(uniqueAddresses[0].id)
-        );
-      } else {
-        setSelectedAddressId(null);
-      }
+      return token;
     } catch (error) {
       console.error(
-        'Load checkout addresses:',
+        'TOKEN ERROR:',
         error
       );
 
-      Alert.alert(
-        'Error',
-        error instanceof Error
-          ? error.message
-          : 'Unable to load saved addresses.'
-      );
-    } finally {
-      setAddressLoading(false);
+      return null;
     }
   };
 
-  useEffect(() => {
-    loadAddresses();
-  }, []);
-
   // =====================================================
-  // SELECTED ADDRESS
+  // FETCH DEFAULT ADDRESS
   // =====================================================
 
-  const selectedAddress =
-    addresses.find(
-      (item) =>
-        Number(item.id) ===
-        Number(selectedAddressId)
-    );
+  const fetchDefaultAddress =
+    useCallback(async () => {
+      try {
+        setAddressLoading(true);
 
-  // =====================================================
-  // ADD ADDRESS
-  // =====================================================
+        setErrors((previous) => ({
+          ...previous,
+          general: '',
+        }));
 
-  const saveNewAddress = async () => {
-    if (
-      !name.trim() ||
-      !phone.trim() ||
-      !address.trim() ||
-      !city.trim() ||
-      !state.trim() ||
-      !pincode.trim()
-    ) {
-      Alert.alert(
-        'Missing Details',
-        'Please fill all address details.'
-      );
-      return;
-    }
+        const user =
+          await getUser();
 
-    if (
-      !/^\d{10}$/.test(
-        phone.trim()
-      )
-    ) {
-      Alert.alert(
-        'Invalid Phone',
-        'Enter a valid 10-digit phone number.'
-      );
-      return;
-    }
+        if (!user?.id) {
+          console.log(
+            'NO LOGGED-IN USER FOUND'
+          );
 
-    if (
-      !/^\d{6}$/.test(
-        pincode.trim()
-      )
-    ) {
-      Alert.alert(
-        'Invalid Pincode',
-        'Enter a valid 6-digit pincode.'
-      );
-      return;
-    }
+          setDefaultAddress(null);
 
-    // =================================================
-    // PREVENT DUPLICATE BEFORE API CALL
-    // =================================================
+          setErrors({
+            general:
+              'Please login before continuing.',
+          });
 
-    const newAddressKey = [
-      normalizeAddressValue(name),
-      normalizeAddressValue(phone),
-      normalizeAddressValue(address),
-      normalizeAddressValue(city),
-      normalizeAddressValue(state),
-      normalizeAddressValue(pincode),
-    ].join('|');
+          return;
+        }
 
-    const alreadyExists =
-      addresses.some((item) => {
-        const existingKey = [
-          normalizeAddressValue(
-            item.full_name
-          ),
-          normalizeAddressValue(
-            item.phone
-          ),
-          normalizeAddressValue(
-            item.address_line
-          ),
-          normalizeAddressValue(
-            item.city
-          ),
-          normalizeAddressValue(
-            item.state
-          ),
-          normalizeAddressValue(
-            item.pincode
-          ),
-        ].join('|');
-
-        return (
-          existingKey ===
-          newAddressKey
+        // Email from logged-in user
+        setEmail((previous) =>
+          previous ||
+          user?.email ||
+          ''
         );
+
+        const token =
+          await getAuthToken();
+
+        const url =
+          `${API_BASE_URL}/api/addresses/${user.id}/default`;
+
+        console.log(
+          'FETCH DEFAULT ADDRESS URL:',
+          url
+        );
+
+        console.log(
+          'FETCH DEFAULT ADDRESS USER ID:',
+          user.id
+        );
+
+        const headers: Record<string, string> = {
+          'Content-Type':
+            'application/json',
+
+          'x-user-id':
+            String(user.id),
+        };
+
+        if (token) {
+          headers.Authorization =
+            `Bearer ${token}`;
+        }
+
+        const response =
+          await fetch(url, {
+            method: 'GET',
+            headers,
+          });
+
+        console.log(
+          'ADDRESS RESPONSE STATUS:',
+          response.status
+        );
+
+        const responseText =
+          await response.text();
+
+        console.log(
+          'ADDRESS RAW RESPONSE:',
+          responseText
+        );
+
+        let data: any = {};
+
+        try {
+          data =
+            responseText
+              ? JSON.parse(responseText)
+              : {};
+        } catch (parseError) {
+          console.error(
+            'ADDRESS JSON PARSE ERROR:',
+            parseError
+          );
+
+          throw new Error(
+            'Server returned invalid address data.'
+          );
+        }
+
+        console.log(
+          'ADDRESS API DATA:',
+          data
+        );
+
+        if (!response.ok) {
+          throw new Error(
+            data?.message ||
+              data?.error ||
+              `Address request failed (${response.status})`
+          );
+        }
+
+        // =================================================
+        // SUPPORT DIFFERENT BACKEND RESPONSE FORMATS
+        // =================================================
+
+        let rawAddress =
+          data?.address ??
+          data?.defaultAddress ??
+          data?.default_address ??
+          data?.data?.address ??
+          data?.data?.defaultAddress ??
+          data?.data?.default_address ??
+          data?.data ??
+          null;
+
+        // Some APIs return an array
+        if (
+          Array.isArray(rawAddress)
+        ) {
+          rawAddress =
+            rawAddress.length > 0
+              ? rawAddress[0]
+              : null;
+        }
+
+        console.log(
+          'RAW DEFAULT ADDRESS:',
+          rawAddress
+        );
+
+        const normalized =
+          normalizeAddress(
+            rawAddress
+          );
+
+        console.log(
+          'NORMALIZED DEFAULT ADDRESS:',
+          normalized
+        );
+
+        if (!normalized) {
+          setDefaultAddress(null);
+
+          setErrors({
+            general:
+              'No default address found. Please add or select a default address.',
+          });
+
+          return;
+        }
+
+        setDefaultAddress(
+          normalized
+        );
+
+        setErrors((previous) => ({
+          ...previous,
+          general: '',
+        }));
+
+      } catch (error: any) {
+        console.error(
+          'DEFAULT ADDRESS ERROR:',
+          error
+        );
+
+        setDefaultAddress(null);
+
+        setErrors({
+          general:
+            error?.message ||
+            'Unable to load your default address.',
+        });
+
+      } finally {
+        setAddressLoading(false);
+      }
+    }, []);
+
+  // =====================================================
+  // REFRESH WHEN SCREEN GETS FOCUS
+  // =====================================================
+
+  useFocusEffect(
+    useCallback(() => {
+      console.log(
+        'CHECKOUT SCREEN FOCUSED - LOADING ADDRESS'
+      );
+
+      fetchDefaultAddress();
+    }, [fetchDefaultAddress])
+  );
+
+  // =====================================================
+  // MANAGE ADDRESSES
+  // =====================================================
+
+  const onManageAddresses =
+    () => {
+      router.push(
+        ADDRESSES_ROUTE as any
+      );
+    };
+
+  // =====================================================
+  // PREPARE ORDER ITEMS
+  // =====================================================
+
+  const prepareOrderItems = () => {
+    const orderItems =
+      safeCart.map((item) => {
+        const variantId =
+          getVariantId(item);
+
+        return {
+          product_id:
+            getProductId(item),
+
+          variant_id:
+            variantId !== null &&
+            variantId !== undefined &&
+            variantId !== ''
+              ? Number(variantId)
+              : null,
+
+          quantity:
+            Number(
+              item?.quantity || 1
+            ),
+
+          price:
+            Number(
+              item?.price || 0
+            ),
+
+          gst_rate:
+            getGstRate(item),
+        };
       });
 
-    if (alreadyExists) {
-      Alert.alert(
-        'Address Already Saved',
-        'This address is already saved.'
-      );
-      return;
-    }
+    console.log(
+      'CHECKOUT ORDER ITEMS:',
+      orderItems
+    );
 
-    try {
-      setSavingAddress(true);
+    return orderItems;
+  };
 
-      const user = await getUser();
+  // =====================================================
+  // COD ORDER
+  // =====================================================
 
-      if (!user) {
-        Alert.alert(
-          'Login Required',
-          'Please login again.'
-        );
-        return;
-      }
-
+  const createCODOrder =
+    async (
+      userId: number,
+      addressId: number,
+      orderItems: any[]
+    ) => {
       const token =
         await getAuthToken();
 
-      if (!token) {
-        Alert.alert(
-          'Login Required',
-          'Your login session has expired. Please login again.'
-        );
-        return;
-      }
-
       const response =
         await fetch(
-          `${API_BASE_URL}/api/addresses`,
+          `${API_BASE_URL}/api/orders`,
           {
             method: 'POST',
 
@@ -410,30 +575,24 @@ export default function CheckoutScreen() {
                 `Bearer ${token}`,
 
               'x-user-id':
-                String(user.id),
+                String(userId),
             },
 
             body: JSON.stringify({
               user_id:
-                Number(user.id),
+                userId,
 
-              full_name:
-                name.trim(),
+              address_id:
+                addressId,
 
-              phone:
-                phone.trim(),
+              total_amount:
+                total,
 
-              address_line:
-                address.trim(),
+              payment_method:
+                'Cash on Delivery',
 
-              city:
-                city.trim(),
-
-              state:
-                state.trim(),
-
-              pincode:
-                pincode.trim(),
+              items:
+                orderItems,
             }),
           }
         );
@@ -442,197 +601,32 @@ export default function CheckoutScreen() {
         await response.json();
 
       console.log(
-        'SAVE CHECKOUT ADDRESS RESPONSE:',
+        'COD ORDER RESPONSE:',
         data
       );
 
-      if (
-        !response.ok ||
-        !data?.success
-      ) {
+      if (!response.ok) {
         throw new Error(
           data?.message ||
-            'Failed to save address'
+            'Failed to create order.'
         );
       }
 
-      const newAddress =
-        data?.address;
-
-      setName('');
-      setPhone('');
-      setAddress('');
-      setCity('');
-      setState('Tamil Nadu');
-      setPincode('');
-
-      setAddAddressVisible(false);
-
-      await loadAddresses();
-
-      if (newAddress?.id) {
-        setSelectedAddressId(
-          Number(newAddress.id)
-        );
-      }
-
-      Alert.alert(
-        'Success',
-        'Address added successfully.'
-      );
-    } catch (error) {
-      console.error(
-        'Save checkout address:',
-        error
-      );
-
-      Alert.alert(
-        'Error',
-        error instanceof Error
-          ? error.message
-          : 'Unable to save address.'
-      );
-    } finally {
-      setSavingAddress(false);
-    }
-  };
+      return data;
+    };
 
   // =====================================================
-  // CREATE COD ORDER
+  // RAZORPAY CREATE ORDER
   // =====================================================
 
-  const createCODOrder = async (
-    userId: number,
-    addressId: number
-  ) => {
-    const token =
-      await getAuthToken();
-
-    if (!token) {
-      throw new Error(
-        'Login session expired. Please login again.'
-      );
-    }
-
-    const orderItems =
-      cartItems.map((item) => ({
-        product_id:
-          Number(item.id),
-
-        quantity:
-          Number(item.quantity),
-
-        price:
-          Number(item.price),
-      }));
-
-    console.log(
-      'CREATE COD ORDER - user:',
-      userId
-    );
-
-    console.log(
-      'CREATE COD ORDER - address:',
-      addressId
-    );
-
-    console.log(
-      'CREATE COD ORDER - items:',
-      orderItems
-    );
-
-    const response =
-      await fetch(
-        `${API_BASE_URL}/api/orders`,
-        {
-          method: 'POST',
-
-          headers: {
-            'Content-Type':
-              'application/json',
-
-            Authorization:
-              `Bearer ${token}`,
-
-            'x-user-id':
-              String(userId),
-          },
-
-          body: JSON.stringify({
-            user_id:
-              userId,
-
-            address_id:
-              addressId,
-
-            total_amount:
-              Number(cartTotal),
-
-            payment_method:
-              'Cash on Delivery',
-
-            items:
-              orderItems,
-          }),
-        }
-      );
-
-    const data =
-      await response.json();
-
-    console.log(
-      'CREATE COD ORDER RESPONSE:',
-      data
-    );
-
-    if (
-      !response.ok ||
-      !data?.success
-    ) {
-      throw new Error(
-        data?.message ||
-          'Failed to create order'
-      );
-    }
-
-    return data;
-  };
-
-  // =====================================================
-  // RAZORPAY
-  // =====================================================
-
-  const startRazorpayPayment =
+  const createRazorpayOrder =
     async (
-      userId: number,
-      addressId: number
+      userId: number
     ) => {
       const token =
         await getAuthToken();
 
-      if (!token) {
-        throw new Error(
-          'Login session expired. Please login again.'
-        );
-      }
-
-      const orderItems =
-        cartItems.map((item) => ({
-          product_id:
-            Number(item.id),
-
-          quantity:
-            Number(item.quantity),
-
-          price:
-            Number(item.price),
-        }));
-
-      console.log(
-        'RAZORPAY CREATE ORDER'
-      );
-
-      const createResponse =
+      const response =
         await fetch(
           `${API_BASE_URL}/api/payment/create-order`,
           {
@@ -654,75 +648,48 @@ export default function CheckoutScreen() {
                 userId,
 
               total_amount:
-                Number(cartTotal),
+                total,
             }),
           }
         );
 
-      const createData =
-        await createResponse.json();
+      const data =
+        await response.json();
 
-      console.log(
-        'RAZORPAY CREATE RESPONSE:',
-        createData
-      );
-
-      if (
-        !createResponse.ok ||
-        !createData?.success
-      ) {
+      if (!response.ok) {
         throw new Error(
-          createData?.message ||
-            'Unable to create Razorpay order'
+          data?.message ||
+            'Failed to create payment order.'
         );
       }
 
-      const options = {
-        key:
-          createData.key_id,
+      return data;
+    };
 
-        amount:
-          createData.amount,
+  // =====================================================
+  // VERIFY PAYMENT
+  // =====================================================
 
-        currency:
-          createData.currency ||
-          'INR',
+  const verifyRazorpayPayment =
+    async ({
+      userId,
+      addressId,
+      orderItems,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    }: {
+      userId: number;
+      addressId: number;
+      orderItems: any[];
+      razorpay_order_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    }) => {
+      const token =
+        await getAuthToken();
 
-        name:
-          'ShopEase',
-
-        description:
-          'ShopEase Order Payment',
-
-        order_id:
-          createData.razorpay_order_id,
-
-        prefill: {
-          name:
-            selectedAddress?.full_name ||
-            '',
-
-          contact:
-            selectedAddress?.phone ||
-            '',
-        },
-
-        theme: {
-          color: '#7c3aed',
-        },
-      };
-
-      const paymentResult =
-        await RazorpayCheckout.open(
-          options
-        );
-
-      console.log(
-        'RAZORPAY PAYMENT RESULT:',
-        paymentResult
-      );
-
-      const verifyResponse =
+      const response =
         await fetch(
           `${API_BASE_URL}/api/payment/verify`,
           {
@@ -740,17 +707,9 @@ export default function CheckoutScreen() {
             },
 
             body: JSON.stringify({
-              razorpay_order_id:
-                paymentResult
-                  .razorpay_order_id,
-
-              razorpay_payment_id:
-                paymentResult
-                  .razorpay_payment_id,
-
-              razorpay_signature:
-                paymentResult
-                  .razorpay_signature,
+              razorpay_order_id,
+              razorpay_payment_id,
+              razorpay_signature,
 
               user_id:
                 userId,
@@ -759,7 +718,7 @@ export default function CheckoutScreen() {
                 addressId,
 
               total_amount:
-                Number(cartTotal),
+                total,
 
               items:
                 orderItems,
@@ -767,347 +726,534 @@ export default function CheckoutScreen() {
           }
         );
 
-      const verifyData =
-        await verifyResponse.json();
+      const data =
+        await response.json();
 
       console.log(
-        'RAZORPAY VERIFY RESPONSE:',
-        verifyData
+        'PAYMENT VERIFY RESPONSE:',
+        data
       );
 
-      if (
-        !verifyResponse.ok ||
-        !verifyData?.success
-      ) {
+      if (!response.ok) {
         throw new Error(
-          verifyData?.message ||
-            'Payment verification failed'
+          data?.message ||
+            'Payment verification failed.'
         );
       }
 
-      return verifyData;
+      return data;
     };
 
   // =====================================================
-  // PLACE ORDER
+  // RAZORPAY
   // =====================================================
 
-  const placeOrder =
+  const startRazorpayPayment =
+    async ({
+      userId,
+      addressId,
+      orderItems,
+    }: {
+      userId: number;
+      addressId: number;
+      orderItems: any[];
+    }) => {
+      const paymentOrder =
+        await createRazorpayOrder(
+          userId
+        );
+
+      console.log(
+        'RAZORPAY ORDER:',
+        paymentOrder
+      );
+
+      const options = {
+        key:
+          paymentOrder.key_id,
+
+        amount:
+          paymentOrder.amount,
+
+        currency:
+          paymentOrder.currency ||
+          'INR',
+
+        name:
+          'ShopEase',
+
+        description:
+          'ShopEase Order Payment',
+
+        order_id:
+          paymentOrder.razorpay_order_id,
+
+        prefill: {
+          name:
+            defaultAddress?.full_name ||
+            '',
+
+          email:
+            email.trim(),
+
+          contact:
+            defaultAddress?.phone ||
+            '',
+        },
+
+        notes: {
+          user_id:
+            String(userId),
+
+          address_id:
+            String(addressId),
+        },
+
+        theme: {
+          color:
+            '#6f38dc',
+        },
+      };
+
+      const paymentResult =
+        await RazorpayCheckout.open(
+          options as any
+        );
+
+      console.log(
+        'RAZORPAY PAYMENT RESULT:',
+        paymentResult
+      );
+
+      return verifyRazorpayPayment({
+        userId,
+        addressId,
+        orderItems,
+
+        razorpay_order_id:
+          paymentResult.razorpay_order_id,
+
+        razorpay_payment_id:
+          paymentResult.razorpay_payment_id,
+
+        razorpay_signature:
+          paymentResult.razorpay_signature,
+      });
+    };
+
+  // =====================================================
+  // FINISH ORDER
+  // =====================================================
+
+  const finishOrder =
+    (orderId: string | number) => {
+      console.log(
+        'ORDER CREATED:',
+        orderId
+      );
+
+      const createdTotal =
+        String(total);
+
+      if (!isBuyNow) {
+        clearCart();
+      }
+
+      router.replace({
+        pathname:
+          '/order-success',
+
+        params: {
+          orderId:
+            String(orderId),
+
+          total:
+            createdTotal,
+        },
+      } as any);
+    };
+
+  // =====================================================
+  // VALIDATE
+  // =====================================================
+
+  const validateCheckout =
     async () => {
-      if (
-        !cartItems ||
-        cartItems.length === 0
-      ) {
-        Alert.alert(
-          'Empty Cart',
-          'Please add products to your cart first.'
-        );
-        return;
-      }
-
-      if (!selectedAddressId) {
-        Alert.alert(
-          'Address Required',
-          'Please select a delivery address.'
-        );
-        return;
-      }
-
       const user =
         await getUser();
 
-      if (!user) {
-        Alert.alert(
-          'Login Required',
-          'Please login before placing an order.'
-        );
-        return;
+      if (!user?.id) {
+        setErrors({
+          general:
+            'Please login before placing an order.',
+        });
+
+        return null;
       }
 
       const token =
         await getAuthToken();
 
       if (!token) {
-        Alert.alert(
-          'Login Required',
-          'Your login session has expired. Please login again.'
-        );
+        setErrors({
+          general:
+            'Your login session has expired. Please login again.',
+        });
+
+        return null;
+      }
+
+      if (!defaultAddress) {
+        setErrors({
+          general:
+            'Please add a delivery address before placing your order.',
+        });
+
+        return null;
+      }
+
+      if (!email.trim()) {
+        setErrors({
+          email:
+            'Email is required.',
+        });
+
+        return null;
+      }
+
+      if (
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+          email.trim()
+        )
+      ) {
+        setErrors({
+          email:
+            'Enter a valid email address.',
+        });
+
+        return null;
+      }
+
+      if (
+        safeCart.length === 0
+      ) {
+        setErrors({
+          general:
+            'Your cart is empty.',
+        });
+
+        return null;
+      }
+
+      for (const item of safeCart) {
+        if (
+          Number(
+            item?.quantity || 0
+          ) <= 0
+        ) {
+          setErrors({
+            general:
+              'Invalid product quantity.',
+          });
+
+          return null;
+        }
+
+        if (
+          getProductId(item) <= 0
+        ) {
+          setErrors({
+            general:
+              'Invalid product information. Please remove the item and add it again.',
+          });
+
+          return null;
+        }
+      }
+
+      setErrors({});
+
+      return user;
+    };
+
+  // =====================================================
+  // PLACE ORDER
+  // =====================================================
+
+  const handlePlaceOrder =
+    async () => {
+      if (loading) return;
+
+      const user =
+        await validateCheckout();
+
+      if (
+        !user ||
+        !defaultAddress
+      ) {
         return;
       }
 
       try {
-        setProcessing(true);
+        setLoading(true);
+        setErrors({});
 
-        // =================================================
-        // COD
-        // =================================================
+        const userId =
+          Number(user.id);
+
+        const addressId =
+          Number(
+            defaultAddress.id
+          );
+
+        const orderItems =
+          prepareOrderItems();
+
+        // ================= COD =================
 
         if (
-          paymentMethod ===
-          'Cash on Delivery'
+          paymentMethod === 'cod'
         ) {
           const orderData =
             await createCODOrder(
-              Number(user.id),
-              Number(
-                selectedAddressId
-              )
+              userId,
+              addressId,
+              orderItems
             );
 
-          if (
-            !orderData?.order?.id
-          ) {
+          const orderId =
+            orderData?.order_id ??
+            orderData?.order?.id;
+
+          if (!orderId) {
             throw new Error(
               'Order ID was not returned.'
             );
           }
 
-          const createdOrderId =
-            String(
-              orderData.order.id
-            );
-
-          const createdOrderTotal =
-            String(cartTotal);
-
-          clearCart();
-
-          router.replace({
-            pathname:
-              '/order-success',
-
-            params: {
-              orderId:
-                createdOrderId,
-
-              total:
-                createdOrderTotal,
-            },
-          } as any);
+          finishOrder(
+            orderId
+          );
 
           return;
         }
 
-        // =================================================
-        // RAZORPAY
-        // =================================================
+        // ================= ONLINE =================
 
-        const paymentData =
-          await startRazorpayPayment(
-            Number(user.id),
-            Number(
-              selectedAddressId
-            )
-          );
+        const verified =
+          await startRazorpayPayment({
+            userId,
+            addressId,
+            orderItems,
+          });
 
-        if (
-          !paymentData?.order_id
-        ) {
+        const orderId =
+          verified?.order_id ??
+          verified?.order?.id;
+
+        if (!orderId) {
           throw new Error(
             'Payment order was not created correctly.'
           );
         }
 
-        const createdOrderId =
-          String(
-            paymentData.order_id
-          );
+        finishOrder(
+          orderId
+        );
 
-        const createdOrderTotal =
-          String(cartTotal);
-
-        clearCart();
-
-        router.replace({
-          pathname:
-            '/order-success',
-
-          params: {
-            orderId:
-              createdOrderId,
-
-            total:
-              createdOrderTotal,
-          },
-        } as any);
       } catch (error: any) {
         console.error(
-          'Checkout payment/order error:',
+          'CHECKOUT ERROR:',
           error
         );
 
-        if (
+        const cancelled =
           error?.code === 2 ||
-          error?.description
-            ?.toLowerCase()
-            .includes('cancel')
-        ) {
-          Alert.alert(
-            'Payment Cancelled',
-            'You cancelled the payment.'
-          );
+          String(
+            error?.description || ''
+          )
+            .toLowerCase()
+            .includes('cancel');
 
-          return;
+        if (cancelled) {
+          setErrors({
+            general:
+              'Payment was cancelled. Your order was not placed.',
+          });
+        } else {
+          setErrors({
+            general:
+              error?.message ||
+              error?.description ||
+              'Unable to place order. Please try again.',
+          });
         }
 
-        Alert.alert(
-          'Payment Failed',
-          error?.message ||
-            error?.description ||
-            'Unable to complete payment.'
-        );
       } finally {
-        setProcessing(false);
+        setLoading(false);
       }
     };
 
   // =====================================================
-  // UI
+  // HEADER
   // =====================================================
 
-  return (
-    <View style={styles.container}>
+  const header = (
+    <View style={styles.header}>
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() =>
+          router.back()
+        }
+        disabled={loading}
+      >
+        <Text style={styles.backText}>
+          ‹
+        </Text>
+      </TouchableOpacity>
 
-      {/* =================================================
-          HEADER
-      ================================================= */}
-
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
-          <Text style={styles.backText}>
-            ‹
-          </Text>
-        </TouchableOpacity>
-
+      <View
+        style={styles.headerTextBox}
+      >
         <Text
           style={styles.headerTitle}
         >
           Checkout
         </Text>
 
-        <View
-          style={styles.headerSpace}
-        />
+        <Text
+          style={styles.headerSubtitle}
+        >
+          Review your order and complete
+          your purchase
+        </Text>
       </View>
+    </View>
+  );
 
-      <ScrollView
-        style={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+  // =====================================================
+  // EMPTY CART
+  // =====================================================
+
+  if (
+    safeCart.length === 0
+  ) {
+    return (
+      <View
+        style={styles.container}
       >
+        {header}
 
-        {/* =================================================
-            ORDER SUMMARY
-        ================================================= */}
-
-        <View style={styles.section}>
+        <View
+          style={styles.emptyCart}
+        >
           <Text
-            style={styles.sectionTitle}
+            style={styles.emptyCartIcon}
           >
-            Order Summary
+            🛒
           </Text>
 
-          {cartItems.map((item) => (
-            <View
-              key={String(item.id)}
-              style={styles.orderItem}
-            >
-              <View
-                style={styles.itemInfo}
-              >
-                <Text
-                  style={styles.itemName}
-                  numberOfLines={1}
-                >
-                  {item.name}
-                </Text>
-
-                <Text
-                  style={
-                    styles.itemQuantity
-                  }
-                >
-                  Quantity: {item.quantity}
-                </Text>
-              </View>
-
-              <Text
-                style={styles.itemPrice}
-              >
-                ₹
-                {(
-                  Number(item.price) *
-                  Number(item.quantity)
-                ).toLocaleString(
-                  'en-IN'
-                )}
-              </Text>
-            </View>
-          ))}
-
-          <View
-            style={styles.divider}
-          />
-
-          <View
-            style={styles.totalRow}
+          <Text
+            style={styles.emptyCartTitle}
           >
-            <Text
-              style={styles.totalLabel}
-            >
-              Total
-            </Text>
+            Your cart is empty
+          </Text>
 
-            <Text
-              style={styles.totalPrice}
-            >
-              ₹
-              {Number(
-                cartTotal
-              ).toLocaleString(
-                'en-IN'
-              )}
-            </Text>
-          </View>
-        </View>
+          <Text
+            style={styles.emptyCartText}
+          >
+            Add some products before
+            proceeding to checkout.
+          </Text>
 
-        {/* =================================================
-            DELIVERY ADDRESS
-        ================================================= */}
-
-        <View style={styles.section}>
-          <View
+          <TouchableOpacity
             style={
-              styles.sectionHeaderRow
+              styles.primaryButton
+            }
+            onPress={() =>
+              router.back()
             }
           >
             <Text
-              style={styles.sectionTitle}
-            >
-              Delivery Address
-            </Text>
-
-            <TouchableOpacity
-              onPress={() =>
-                setAddAddressVisible(
-                  true
-                )
+              style={
+                styles.primaryButtonText
               }
             >
+              Continue Shopping
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // =====================================================
+  // MAIN UI
+  // =====================================================
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={
+        Platform.OS === 'ios'
+          ? 'padding'
+          : undefined
+      }
+    >
+      {header}
+
+      <ScrollView
+        style={styles.scroll}
+        showsVerticalScrollIndicator={
+          false
+        }
+        keyboardShouldPersistTaps="handled"
+      >
+
+        {/* ================= DELIVERY ADDRESS ================= */}
+
+        <View
+          style={styles.card}
+        >
+          <View
+            style={styles.cardTitleRow}
+          >
+            <View>
               <Text
-                style={styles.addText}
+                style={
+                  styles.sectionLabel
+                }
               >
-                + Add New
+                DELIVERY
               </Text>
-            </TouchableOpacity>
+
+              <Text
+                style={
+                  styles.cardTitle
+                }
+              >
+                Delivery Address
+              </Text>
+            </View>
+
+            {defaultAddress && (
+              <Text
+                style={
+                  styles.defaultBadge
+                }
+              >
+                ⭐ Default
+              </Text>
+            )}
           </View>
+
+          {/* LOADING */}
 
           {addressLoading ? (
             <View
-              style={styles.loaderBox}
+              style={
+                styles.centerBox
+              }
             >
               <ActivityIndicator
                 size="small"
@@ -1116,249 +1262,323 @@ export default function CheckoutScreen() {
 
               <Text
                 style={
-                  styles.loaderText
+                  styles.mutedText
                 }
               >
-                Loading addresses...
+                Loading your saved
+                address...
               </Text>
             </View>
-          ) : addresses.length ===
-            0 ? (
+
+          ) : defaultAddress ? (
+
+            /* ADDRESS FOUND */
+
             <View
               style={
-                styles.emptyAddress
+                styles.addressCard
               }
             >
-              <Text
+              <View
                 style={
-                  styles.emptyTitle
-                }
-              >
-                No saved address
-              </Text>
-
-              <Text
-                style={
-                  styles.emptySubtext
-                }
-              >
-                Add a delivery address to continue.
-              </Text>
-
-              <TouchableOpacity
-                style={
-                  styles.addAddressButton
-                }
-                onPress={() =>
-                  setAddAddressVisible(
-                    true
-                  )
+                  styles.addressTop
                 }
               >
                 <Text
                   style={
-                    styles.addAddressButtonText
+                    styles.addressIcon
+                  }
+                >
+                  🏠
+                </Text>
+
+                <View
+                  style={
+                    styles.flex1
+                  }
+                >
+                  <Text
+                    style={
+                      styles.addressName
+                    }
+                  >
+                    {
+                      defaultAddress.full_name
+                    }
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.addressPhone
+                    }
+                  >
+                    ☎{' '}
+                    {
+                      defaultAddress.phone
+                    }
+                  </Text>
+                </View>
+              </View>
+
+              <Text
+                style={
+                  styles.addressLine
+                }
+              >
+                📍{' '}
+                {
+                  defaultAddress.address_line
+                }
+              </Text>
+
+              <View
+                style={
+                  styles.tagsRow
+                }
+              >
+                {!!defaultAddress.city && (
+                  <Text
+                    style={styles.tag}
+                  >
+                    🏙{' '}
+                    {
+                      defaultAddress.city
+                    }
+                  </Text>
+                )}
+
+                {!!defaultAddress.state && (
+                  <Text
+                    style={styles.tag}
+                  >
+                    🗺{' '}
+                    {
+                      defaultAddress.state
+                    }
+                  </Text>
+                )}
+
+                {!!defaultAddress.pincode && (
+                  <Text
+                    style={styles.tag}
+                  >
+                    📌{' '}
+                    {
+                      defaultAddress.pincode
+                    }
+                  </Text>
+                )}
+              </View>
+
+              <View
+                style={
+                  styles.manageBox
+                }
+              >
+                <View
+                  style={
+                    styles.flex1
+                  }
+                >
+                  <Text
+                    style={
+                      styles.manageTitle
+                    }
+                  >
+                    ⭐ Default delivery
+                    address
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.manageText
+                    }
+                  >
+                    This address will be
+                    used for your order.
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={
+                    onManageAddresses
+                  }
+                  disabled={loading}
+                >
+                  <Text
+                    style={
+                      styles.manageLink
+                    }
+                  >
+                    Manage Addresses →
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+          ) : (
+
+            /* NO ADDRESS */
+
+            <View
+              style={
+                styles.centerBox
+              }
+            >
+              <Text
+                style={
+                  styles.noAddressIcon
+                }
+              >
+                📍
+              </Text>
+
+              <Text
+                style={
+                  styles.noAddressTitle
+                }
+              >
+                No default address
+              </Text>
+
+              <Text
+                style={
+                  styles.mutedText
+                }
+              >
+                Add a delivery address
+                before placing your
+                order.
+              </Text>
+
+              <TouchableOpacity
+                style={
+                  styles.primaryButton
+                }
+                onPress={
+                  onManageAddresses
+                }
+                disabled={loading}
+              >
+                <Text
+                  style={
+                    styles.primaryButtonText
                   }
                 >
                   + Add Address
                 </Text>
               </TouchableOpacity>
             </View>
-          ) : (
-            addresses.map((item) => {
-              const selected =
-                Number(
-                  selectedAddressId
-                ) ===
-                Number(item.id);
-
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[
-                    styles.addressCard,
-                    selected &&
-                      styles.addressCardSelected,
-                  ]}
-                  onPress={() =>
-                    setSelectedAddressId(
-                      Number(item.id)
-                    )
-                  }
-                  activeOpacity={0.8}
-                >
-                  <View
-                    style={
-                      styles.addressTop
-                    }
-                  >
-                    <View
-                      style={
-                        styles.radio
-                      }
-                    >
-                      {selected && (
-                        <View
-                          style={
-                            styles.radioDot
-                          }
-                        />
-                      )}
-                    </View>
-
-                    <View
-                      style={
-                        styles.addressInfo
-                      }
-                    >
-                      <Text
-                        style={
-                          styles.addressName
-                        }
-                        numberOfLines={1}
-                      >
-                        {item.full_name}
-                      </Text>
-
-                      <Text
-                        style={
-                          styles.addressPhone
-                        }
-                      >
-                        {item.phone}
-                      </Text>
-                    </View>
-
-                    {selected && (
-                      <Text
-                        style={
-                          styles.selectedText
-                        }
-                      >
-                        ✓ Selected
-                      </Text>
-                    )}
-                  </View>
-
-                  <Text
-                    style={
-                      styles.addressText
-                    }
-                    numberOfLines={2}
-                  >
-                    {item.address_line}
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.addressLocation
-                    }
-                    numberOfLines={1}
-                  >
-                    {item.city},{' '}
-                    {item.state} -{' '}
-                    {item.pincode}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })
           )}
+
+          {/* EMAIL */}
+
+          <View
+            style={styles.emailBox}
+          >
+            <Text
+              style={styles.label}
+            >
+              Email Address{' '}
+              <Text
+                style={
+                  styles.required
+                }
+              >
+                *
+              </Text>
+            </Text>
+
+            <TextInput
+              style={[
+                styles.input,
+                !!errors.email &&
+                  styles.inputError,
+              ]}
+              value={email}
+              placeholder="Enter your email"
+              placeholderTextColor="#999"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!loading}
+              onChangeText={(text) => {
+                setEmail(text);
+
+                setErrors(
+                  (previous) => ({
+                    ...previous,
+                    email: '',
+                    general: '',
+                  })
+                );
+              }}
+            />
+
+            {!!errors.email && (
+              <Text
+                style={
+                  styles.errorText
+                }
+              >
+                {errors.email}
+              </Text>
+            )}
+          </View>
         </View>
 
-        {/* =================================================
-            PAYMENT
-        ================================================= */}
+        {/* ================= PAYMENT ================= */}
 
-        <View style={styles.section}>
+        <View
+          style={styles.card}
+        >
           <Text
-            style={styles.sectionTitle}
+            style={
+              styles.sectionLabel
+            }
+          >
+            PAYMENT
+          </Text>
+
+          <Text
+            style={[
+              styles.cardTitle,
+              styles.mb12,
+            ]}
           >
             Payment Method
           </Text>
-
-          {/* RAZORPAY */}
-
-          <TouchableOpacity
-            style={[
-              styles.paymentOption,
-              paymentMethod ===
-                'Razorpay' &&
-                styles.paymentOptionActive,
-            ]}
-            onPress={() =>
-              setPaymentMethod(
-                'Razorpay'
-              )
-            }
-          >
-            <Text
-              style={styles.paymentIcon}
-            >
-              💳
-            </Text>
-
-            <View
-              style={styles.paymentInfo}
-            >
-              <Text
-                style={
-                  styles.paymentTitle
-                }
-              >
-                Razorpay
-              </Text>
-
-              <Text
-                style={
-                  styles.paymentSubtext
-                }
-              >
-                UPI, Cards, Net Banking & Wallets
-              </Text>
-            </View>
-
-            <View
-              style={[
-                styles.radio,
-                paymentMethod ===
-                  'Razorpay' &&
-                  styles.radioActive,
-              ]}
-            >
-              {paymentMethod ===
-                'Razorpay' && (
-                <View
-                  style={
-                    styles.radioDot
-                  }
-                />
-              )}
-            </View>
-          </TouchableOpacity>
 
           {/* COD */}
 
           <TouchableOpacity
             style={[
               styles.paymentOption,
-              paymentMethod ===
-                'Cash on Delivery' &&
+              paymentMethod === 'cod' &&
                 styles.paymentOptionActive,
             ]}
-            onPress={() =>
+            disabled={loading}
+            activeOpacity={0.8}
+            onPress={() => {
               setPaymentMethod(
-                'Cash on Delivery'
-              )
-            }
+                'cod'
+              );
+
+              setErrors({});
+            }}
           >
             <Text
-              style={styles.paymentIcon}
+              style={
+                styles.paymentIcon
+              }
             >
               💵
             </Text>
 
             <View
-              style={styles.paymentInfo}
+              style={
+                styles.flex1
+              }
             >
               <Text
                 style={
@@ -1373,7 +1593,8 @@ export default function CheckoutScreen() {
                   styles.paymentSubtext
                 }
               >
-                Pay when your order arrives
+                Pay when your order
+                arrives
               </Text>
             </View>
 
@@ -1381,12 +1602,80 @@ export default function CheckoutScreen() {
               style={[
                 styles.radio,
                 paymentMethod ===
-                  'Cash on Delivery' &&
+                  'cod' &&
                   styles.radioActive,
               ]}
             >
               {paymentMethod ===
-                'Cash on Delivery' && (
+                'cod' && (
+                <View
+                  style={
+                    styles.radioDot
+                  }
+                />
+              )}
+            </View>
+          </TouchableOpacity>
+
+          {/* ONLINE */}
+
+          <TouchableOpacity
+            style={[
+              styles.paymentOption,
+              paymentMethod === 'online' &&
+                styles.paymentOptionActive,
+            ]}
+            disabled={loading}
+            activeOpacity={0.8}
+            onPress={() => {
+              setPaymentMethod(
+                'online'
+              );
+
+              setErrors({});
+            }}
+          >
+            <Text
+              style={
+                styles.paymentIcon
+              }
+            >
+              💳
+            </Text>
+
+            <View
+              style={
+                styles.flex1
+              }
+            >
+              <Text
+                style={
+                  styles.paymentTitle
+                }
+              >
+                Online Payment
+              </Text>
+
+              <Text
+                style={
+                  styles.paymentSubtext
+                }
+              >
+                UPI, Cards, Net Banking
+                and more
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.radio,
+                paymentMethod ===
+                  'online' &&
+                  styles.radioActive,
+              ]}
+            >
+              {paymentMethod ===
+                'online' && (
                 <View
                   style={
                     styles.radioDot
@@ -1397,271 +1686,399 @@ export default function CheckoutScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* =================================================
-            PLACE ORDER
-        ================================================= */}
+        {/* ================= ERROR ================= */}
 
-        <TouchableOpacity
-          style={[
-            styles.placeOrderButton,
-            processing &&
-              styles.disabledButton,
-          ]}
-          onPress={placeOrder}
-          disabled={processing}
-          activeOpacity={0.8}
-        >
-          {processing ? (
-            <ActivityIndicator
-              color="#fff"
-            />
-          ) : (
+        {!!errors.general && (
+          <View
+            style={
+              styles.generalError
+            }
+          >
             <Text
               style={
-                styles.placeOrderText
+                styles.generalErrorText
               }
             >
-              {paymentMethod ===
-              'Razorpay'
-                ? `Pay ₹${Number(
-                    cartTotal
-                  ).toLocaleString(
-                    'en-IN'
-                  )}`
-                : `Place Order • ₹${Number(
-                    cartTotal
-                  ).toLocaleString(
-                    'en-IN'
-                  )}`}
+              ⚠️ {errors.general}
             </Text>
-          )}
-        </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ================= ORDER SUMMARY ================= */}
 
         <View
-          style={{ height: 40 }}
-        />
-      </ScrollView>
-
-      {/* =================================================
-          ADD ADDRESS MODAL
-      ================================================= */}
-
-      <Modal
-        visible={
-          addAddressVisible
-        }
-        animationType="slide"
-        transparent
-        onRequestClose={() => {
-          if (!savingAddress) {
-            setAddAddressVisible(
-              false
-            );
-          }
-        }}
-      >
-        {/* KEYBOARD FIX START */}
-
-        <KeyboardAvoidingView
-          style={styles.modalKeyboard}
-          behavior={
-            Platform.OS === 'ios'
-              ? 'padding'
-              : 'height'
-          }
-          keyboardVerticalOffset={
-            Platform.OS === 'ios'
-              ? 0
-              : 20
-          }
+          style={styles.card}
         >
           <View
             style={
-              styles.modalOverlay
+              styles.cardTitleRow
             }
           >
-            <View
+            <View>
+              <Text
+                style={
+                  styles.sectionLabel
+                }
+              >
+                YOUR ORDER
+              </Text>
+
+              <Text
+                style={
+                  styles.cardTitle
+                }
+              >
+                Order Summary
+              </Text>
+            </View>
+
+            <Text
               style={
-                styles.modalContainer
+                styles.itemCount
               }
             >
-              <View
-                style={
-                  styles.modalHeader
-                }
-              >
-                <Text
+              {safeCart.length}{' '}
+              {safeCart.length === 1
+                ? 'item'
+                : 'items'}
+            </Text>
+          </View>
+
+          {safeCart.map(
+            (item, index) => {
+              const itemTotal =
+                Number(
+                  item?.price || 0
+                ) *
+                Number(
+                  item?.quantity || 1
+                );
+
+              const imageUri =
+                item?.image ||
+                item?.product_image ||
+                '';
+
+              return (
+                <View
+                  key={String(
+                    item?.id ??
+                      item?.product_id ??
+                      index
+                  )}
                   style={
-                    styles.modalTitle
+                    styles.productRow
                   }
                 >
-                  Add New Address
-                </Text>
-
-                <TouchableOpacity
-                  disabled={
-                    savingAddress
-                  }
-                  onPress={() =>
-                    setAddAddressVisible(
-                      false
-                    )
-                  }
-                >
-                  <Text
-                    style={
-                      styles.closeText
-                    }
-                  >
-                    ×
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                style={styles.modalScroll}
-                contentContainerStyle={
-                  styles.modalScrollContent
-                }
-                showsVerticalScrollIndicator={
-                  false
-                }
-                keyboardShouldPersistTaps="handled"
-                keyboardDismissMode="on-drag"
-              >
-                <TextInput
-                  style={styles.input}
-                  placeholder="Full Name"
-                  placeholderTextColor="#999"
-                  value={name}
-                  onChangeText={setName}
-                  editable={
-                    !savingAddress
-                  }
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="Phone Number"
-                  placeholderTextColor="#999"
-                  keyboardType="phone-pad"
-                  value={phone}
-                  onChangeText={(text) =>
-                    setPhone(
-                      text
-                        .replace(
-                          /[^0-9]/g,
-                          ''
-                        )
-                        .slice(0, 10)
-                    )
-                  }
-                  maxLength={10}
-                  editable={
-                    !savingAddress
-                  }
-                />
-
-                <TextInput
-                  style={[
-                    styles.input,
-                    styles.addressInput,
-                  ]}
-                  placeholder="Full Address"
-                  placeholderTextColor="#999"
-                  multiline
-                  value={address}
-                  onChangeText={setAddress}
-                  editable={
-                    !savingAddress
-                  }
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="City"
-                  placeholderTextColor="#999"
-                  value={city}
-                  onChangeText={setCity}
-                  editable={
-                    !savingAddress
-                  }
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="State"
-                  placeholderTextColor="#999"
-                  value={state}
-                  onChangeText={setState}
-                  editable={
-                    !savingAddress
-                  }
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="Pincode"
-                  placeholderTextColor="#999"
-                  keyboardType="number-pad"
-                  value={pincode}
-                  onChangeText={(text) =>
-                    setPincode(
-                      text
-                        .replace(
-                          /[^0-9]/g,
-                          ''
-                        )
-                        .slice(0, 6)
-                    )
-                  }
-                  maxLength={6}
-                  editable={
-                    !savingAddress
-                  }
-                />
-
-                <TouchableOpacity
-                  style={[
-                    styles.saveButton,
-                    savingAddress &&
-                      styles.disabledButton,
-                  ]}
-                  onPress={
-                    saveNewAddress
-                  }
-                  disabled={
-                    savingAddress
-                  }
-                >
-                  {savingAddress ? (
-                    <ActivityIndicator
-                      color="#fff"
+                  {imageUri ? (
+                    <Image
+                      source={{
+                        uri: imageUri,
+                      }}
+                      style={
+                        styles.productImage
+                      }
                     />
                   ) : (
+                    <View
+                      style={[
+                        styles.productImage,
+                        styles.imagePlaceholder,
+                      ]}
+                    >
+                      <Text>
+                        🛍️
+                      </Text>
+                    </View>
+                  )}
+
+                  <View
+                    style={
+                      styles.productInfo
+                    }
+                  >
                     <Text
                       style={
-                        styles.saveButtonText
+                        styles.productName
+                      }
+                      numberOfLines={2}
+                    >
+                      {item?.name ||
+                        'Product'}
+                    </Text>
+
+                    {!!item?.selected_size && (
+                      <Text
+                        style={
+                          styles.productMeta
+                        }
+                      >
+                        Size:{' '}
+                        {
+                          item.selected_size
+                        }
+                      </Text>
+                    )}
+
+                    <Text
+                      style={
+                        styles.productMeta
                       }
                     >
-                      Save Address
+                      Qty:{' '}
+                      {
+                        item?.quantity ||
+                        1
+                      }
                     </Text>
-                  )}
-                </TouchableOpacity>
 
-                <View
-                  style={{
-                    height: 30,
-                  }}
-                />
-              </ScrollView>
-            </View>
+                    {!!item?.variant_id && (
+                      <Text
+                        style={
+                          styles.productVariant
+                        }
+                      >
+                        Variant ID:{' '}
+                        {
+                          item.variant_id
+                        }
+                      </Text>
+                    )}
+                  </View>
+
+                  <Text
+                    style={
+                      styles.productPrice
+                    }
+                  >
+                    ₹
+                    {money(
+                      itemTotal
+                    )}
+                  </Text>
+                </View>
+              );
+            }
+          )}
+
+          <View
+            style={
+              styles.divider
+            }
+          />
+
+          <View
+            style={
+              styles.summaryRow
+            }
+          >
+            <Text
+              style={
+                styles.summaryLabel
+              }
+            >
+              Subtotal
+            </Text>
+
+            <Text
+              style={
+                styles.summaryValue
+              }
+            >
+              ₹{money(subtotal)}
+            </Text>
           </View>
-        </KeyboardAvoidingView>
 
-        {/* KEYBOARD FIX END */}
-      </Modal>
-    </View>
+          <View
+            style={
+              styles.summaryRow
+            }
+          >
+            <Text
+              style={
+                styles.summaryLabel
+              }
+            >
+              Delivery
+            </Text>
+
+            <Text
+              style={[
+                styles.summaryValue,
+                deliveryFee === 0 &&
+                  styles.freeText,
+              ]}
+            >
+              {deliveryFee === 0
+                ? 'FREE'
+                : `₹${deliveryFee}`}
+            </Text>
+          </View>
+
+          <View
+            style={
+              styles.summaryRow
+            }
+          >
+            <Text
+              style={
+                styles.summaryLabel
+              }
+            >
+              GST
+            </Text>
+
+            <Text
+              style={
+                styles.summaryValue
+              }
+            >
+              ₹
+              {money(
+                gstAmount,
+                true
+              )}
+            </Text>
+          </View>
+
+          <View
+            style={
+              styles.summaryRow
+            }
+          >
+            <Text
+              style={
+                styles.summaryLabel
+              }
+            >
+              Platform Fee
+            </Text>
+
+            <Text
+              style={
+                styles.summaryValue
+              }
+            >
+              ₹
+              {money(
+                platformFee
+              )}
+            </Text>
+          </View>
+
+          <Text
+            style={
+              styles.feeNote
+            }
+          >
+            ℹ️ Platform fee helps us
+            maintain secure and reliable
+            shopping services.
+          </Text>
+
+          <View
+            style={
+              styles.divider
+            }
+          />
+
+          <View
+            style={
+              styles.summaryRow
+            }
+          >
+            <Text
+              style={
+                styles.totalLabel
+              }
+            >
+              Total Amount
+            </Text>
+
+            <Text
+              style={
+                styles.totalValue
+              }
+            >
+              ₹
+              {money(
+                total,
+                true
+              )}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={[
+              styles.placeOrderButton,
+              (loading ||
+                addressLoading ||
+                !defaultAddress) &&
+                styles.disabledButton,
+            ]}
+            onPress={
+              handlePlaceOrder
+            }
+            disabled={
+              loading ||
+              addressLoading ||
+              !defaultAddress
+            }
+            activeOpacity={0.8}
+          >
+            {loading ? (
+              <View
+                style={
+                  styles.row
+                }
+              >
+                <ActivityIndicator
+                  color="#fff"
+                />
+
+                <Text
+                  style={[
+                    styles.placeOrderText,
+                    styles.ml8,
+                  ]}
+                >
+                  {paymentMethod ===
+                  'online'
+                    ? 'Opening Payment...'
+                    : 'Placing Order...'}
+                </Text>
+              </View>
+            ) : (
+              <Text
+                style={
+                  styles.placeOrderText
+                }
+              >
+                {paymentMethod ===
+                'online'
+                  ? 'Pay Securely'
+                  : 'Place Order'}
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          <Text
+            style={
+              styles.securityText
+            }
+          >
+            🔒 Secure payment powered
+            by Razorpay Test Environment.
+          </Text>
+        </View>
+
+        <View
+          style={{
+            height: 40,
+          }}
+        />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -1675,14 +2092,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8f8f8',
   },
 
+  scroll: {
+    flex: 1,
+  },
+
+  flex1: {
+    flex: 1,
+  },
+
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  ml8: {
+    marginLeft: 8,
+  },
+
+  mb12: {
+    marginBottom: 12,
+  },
+
+  // HEADER
+
   header: {
     paddingTop: 50,
     paddingHorizontal: 16,
-    paddingBottom: 15,
+    paddingBottom: 14,
     backgroundColor: '#fff',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
 
   backButton: {
@@ -1700,122 +2139,85 @@ const styles = StyleSheet.create({
     marginTop: -4,
   },
 
+  headerTextBox: {
+    marginLeft: 12,
+    flex: 1,
+  },
+
   headerTitle: {
     fontSize: 19,
     fontWeight: '800',
     color: '#181818',
   },
 
-  headerSpace: {
-    width: 42,
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#777',
+    marginTop: 2,
   },
 
-  scroll: {
-    flex: 1,
-  },
+  // CARDS
 
-  section: {
+  card: {
     backgroundColor: '#fff',
     marginHorizontal: 12,
     marginTop: 10,
-    padding: 13,
+    padding: 14,
     borderRadius: 13,
   },
 
-  sectionTitle: {
+  cardTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#7c3aed',
+    letterSpacing: 1,
+  },
+
+  cardTitle: {
     fontSize: 17,
     fontWeight: '800',
     color: '#181818',
-    marginBottom: 12,
+    marginTop: 2,
   },
 
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  addText: {
+  defaultBadge: {
+    fontSize: 11,
+    fontWeight: '800',
     color: '#7c3aed',
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 12,
+    backgroundColor: '#f3ecff',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 20,
+    overflow: 'hidden',
   },
 
-  // =====================================================
-  // ORDER
-  // =====================================================
-
-  orderItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  centerBox: {
     alignItems: 'center',
-    paddingVertical: 7,
+    paddingVertical: 16,
   },
 
-  itemInfo: {
-    flex: 1,
-    paddingRight: 10,
-  },
-
-  itemName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#222',
-  },
-
-  itemQuantity: {
-    fontSize: 12,
+  mutedText: {
     color: '#777',
-    marginTop: 3,
+    fontSize: 12,
+    marginTop: 6,
+    textAlign: 'center',
   },
 
-  itemPrice: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#222',
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: '#eee',
-    marginVertical: 9,
-  },
-
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#222',
-  },
-
-  totalPrice: {
-    fontSize: 19,
-    fontWeight: '800',
-    color: '#111',
-  },
-
-  // =====================================================
   // ADDRESS
-  // =====================================================
 
   addressCard: {
     borderWidth: 1,
-    borderColor: '#e5e5e5',
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 7,
-    backgroundColor: '#ffffff',
-  },
-
-  addressCardSelected: {
     borderColor: '#7c3aed',
     backgroundColor: '#faf7ff',
+    borderRadius: 11,
+    padding: 12,
   },
 
   addressTop: {
@@ -1823,41 +2225,160 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  addressInfo: {
-    flex: 1,
-    marginLeft: 8,
-    marginRight: 6,
+  addressIcon: {
+    fontSize: 24,
+    marginRight: 10,
   },
 
   addressName: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
     color: '#222',
   },
 
   addressPhone: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 2,
+  },
+
+  addressLine: {
+    fontSize: 12,
+    color: '#444',
+    marginTop: 10,
+    lineHeight: 18,
+  },
+
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 8,
+  },
+
+  tag: {
+    fontSize: 11,
+    color: '#555',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#eadfff',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 14,
+    marginRight: 6,
+    marginBottom: 4,
+    overflow: 'hidden',
+  },
+
+  manageBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eadfff',
+  },
+
+  manageTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#222',
+  },
+
+  manageText: {
     fontSize: 11,
     color: '#777',
     marginTop: 2,
   },
 
-  selectedText: {
-    color: '#7c3aed',
-    fontSize: 10,
+  manageLink: {
+    fontSize: 12,
     fontWeight: '800',
+    color: '#7c3aed',
+    marginLeft: 8,
   },
 
-  addressText: {
-    marginTop: 6,
+  noAddressIcon: {
+    fontSize: 28,
+  },
+
+  noAddressTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#222',
+    marginTop: 4,
+  },
+
+  // EMAIL
+
+  emailBox: {
+    marginTop: 14,
+  },
+
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#222',
+    marginBottom: 6,
+  },
+
+  required: {
+    color: '#e11d48',
+  },
+
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 9,
+    paddingHorizontal: 13,
+    fontSize: 13,
+    color: '#222',
+    backgroundColor: '#fff',
+  },
+
+  inputError: {
+    borderColor: '#e11d48',
+  },
+
+  errorText: {
+    color: '#e11d48',
     fontSize: 11,
-    color: '#444',
-    lineHeight: 16,
+    marginTop: 4,
   },
 
-  addressLocation: {
+  // PAYMENT
+
+  paymentOption: {
+    minHeight: 64,
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 11,
+    padding: 11,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  paymentOptionActive: {
+    borderColor: '#7c3aed',
+    backgroundColor: '#faf7ff',
+  },
+
+  paymentIcon: {
+    fontSize: 22,
+    marginRight: 10,
+  },
+
+  paymentTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#222',
+  },
+
+  paymentSubtext: {
+    fontSize: 11,
+    color: '#777',
     marginTop: 2,
-    fontSize: 11,
-    color: '#666',
   },
 
   radio: {
@@ -1881,98 +2402,136 @@ const styles = StyleSheet.create({
     backgroundColor: '#7c3aed',
   },
 
-  loaderBox: {
-    alignItems: 'center',
-    paddingVertical: 18,
-  },
+  // ERROR
 
-  loaderText: {
-    marginTop: 7,
-    color: '#777',
-    fontSize: 12,
-  },
-
-  emptyAddress: {
-    alignItems: 'center',
-    paddingVertical: 15,
-  },
-
-  emptyTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#222',
-  },
-
-  emptySubtext: {
-    marginTop: 4,
-    color: '#777',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-
-  addAddressButton: {
-    marginTop: 12,
-    backgroundColor: '#7c3aed',
-    paddingHorizontal: 18,
-    paddingVertical: 9,
-    borderRadius: 8,
-  },
-
-  addAddressButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-
-  // =====================================================
-  // PAYMENT
-  // =====================================================
-
-  paymentOption: {
-    minHeight: 65,
+  generalError: {
+    marginHorizontal: 12,
+    marginTop: 10,
+    backgroundColor: '#fff1f2',
     borderWidth: 1,
-    borderColor: '#eee',
-    borderRadius: 11,
-    padding: 11,
-    marginBottom: 8,
+    borderColor: '#fecdd3',
+    borderRadius: 10,
+    padding: 12,
+  },
+
+  generalErrorText: {
+    color: '#be123c',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // SUMMARY
+
+  itemCount: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#555',
+    backgroundColor: '#f2f2f2',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+
+  productRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: 8,
   },
 
-  paymentOptionActive: {
-    borderColor: '#7c3aed',
-    backgroundColor: '#faf7ff',
+  productImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 9,
+    backgroundColor: '#f2f2f2',
   },
 
-  paymentIcon: {
-    fontSize: 22,
-    marginRight: 10,
+  imagePlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  paymentInfo: {
+  productInfo: {
     flex: 1,
+    marginHorizontal: 10,
   },
 
-  paymentTitle: {
-    fontSize: 14,
-    fontWeight: '800',
+  productName: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#222',
   },
 
-  paymentSubtext: {
+  productMeta: {
     fontSize: 11,
     color: '#777',
     marginTop: 2,
   },
 
-  // =====================================================
-  // PLACE ORDER
-  // =====================================================
+  productVariant: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 2,
+  },
+
+  productPrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#222',
+  },
+
+  divider: {
+    height: 1,
+    backgroundColor: '#eee',
+    marginVertical: 10,
+  },
+
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+
+  summaryLabel: {
+    fontSize: 13,
+    color: '#555',
+  },
+
+  summaryValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#222',
+  },
+
+  freeText: {
+    color: '#16a34a',
+  },
+
+  feeNote: {
+    fontSize: 10,
+    color: '#888',
+    marginTop: 6,
+    lineHeight: 15,
+  },
+
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#222',
+  },
+
+  totalValue: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#111',
+  },
+
+  // BUTTONS
 
   placeOrderButton: {
-    marginHorizontal: 12,
-    marginTop: 10,
-    height: 53,
+    marginTop: 14,
+    height: 52,
     borderRadius: 12,
     backgroundColor: '#7c3aed',
     alignItems: 'center',
@@ -1986,94 +2545,54 @@ const styles = StyleSheet.create({
   },
 
   disabledButton: {
-    opacity: 0.6,
+    opacity: 0.5,
   },
 
-  // =====================================================
-  // MODAL
-  // =====================================================
-
-  modalKeyboard: {
-    flex: 1,
+  securityText: {
+    fontSize: 11,
+    color: '#777',
+    textAlign: 'center',
+    marginTop: 10,
   },
 
-  modalOverlay: {
-    flex: 1,
-    backgroundColor:
-      'rgba(0,0,0,0.45)',
-    justifyContent: 'flex-end',
-  },
-
-  modalContainer: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingHorizontal: 18,
-    paddingTop: 17,
-
-    // KEYBOARD FIX
-    height: '90%',
-    maxHeight: '90%',
-  },
-
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-
-  modalTitle: {
-    fontSize: 19,
-    fontWeight: '800',
-    color: '#181818',
-  },
-
-  closeText: {
-    fontSize: 31,
-    color: '#555',
-  },
-
-  // KEYBOARD FIX
-  modalScroll: {
-    flex: 1,
-  },
-
-  // KEYBOARD FIX
-  modalScrollContent: {
-    paddingBottom: 30,
-  },
-
-  input: {
-    height: 49,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 9,
-    paddingHorizontal: 13,
-    fontSize: 13,
-    color: '#222',
-    backgroundColor: '#fff',
-    marginBottom: 10,
-  },
-
-  addressInput: {
-    height: 80,
-    paddingTop: 13,
-    textAlignVertical: 'top',
-  },
-
-  saveButton: {
-    height: 50,
-    borderRadius: 11,
+  primaryButton: {
+    marginTop: 12,
     backgroundColor: '#7c3aed',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 9,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 9,
   },
 
-  saveButtonText: {
+  primaryButtonText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
+  },
+
+  // EMPTY CART
+
+  emptyCart: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 30,
+  },
+
+  emptyCartIcon: {
+    fontSize: 48,
+  },
+
+  emptyCartTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#222',
+    marginTop: 10,
+  },
+
+  emptyCartText: {
+    fontSize: 13,
+    color: '#777',
+    marginTop: 6,
+    textAlign: 'center',
   },
 });
