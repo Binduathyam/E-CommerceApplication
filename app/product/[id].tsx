@@ -1038,9 +1038,8 @@ const styles = StyleSheet.create({
   heart: { fontSize: 25, color: '#555' },
   heartActive: { color: '#ef4444' },
 
-  // gallery
-  imageContainer: { height: 350, backgroundColor: '#eee' },
-  productImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  imageContainer: { height: 350, backgroundColor: '#fff' },
+productImage: { width: '100%', height: '100%', resizeMode: 'contain' },
   noImage: {
     flex: 1,
     alignItems: 'center',

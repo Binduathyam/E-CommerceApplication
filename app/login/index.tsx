@@ -519,6 +519,38 @@ onPress={() =>
           </TouchableOpacity>
         </View>
 
+        {/* DISPATCH LOGIN */}
+
+        <View
+          style={
+            styles.merchantRegisterRow
+          }
+        >
+          <Text
+            style={
+              styles.registerText
+            }
+          >
+            Dispatch account?
+          </Text>
+
+          <TouchableOpacity
+            onPress={() =>
+              router.push(
+                '/dispatch/login' as any
+              )
+            }
+          >
+            <Text
+              style={
+                styles.registerLink
+              }
+            >
+              {' '}Dispatch Login
+            </Text>
+          </TouchableOpacity>
+        </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );

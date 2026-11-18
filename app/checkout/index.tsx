@@ -18,7 +18,7 @@ import RazorpayCheckout from 'react-native-razorpay';
 import { API_BASE_URL } from '../../config/api';
 import { useCart } from '../../context/CartContext';
 
-const ADDRESSES_ROUTE = '/addresses';
+const ADDRESSES_ROUTE = '/address';
 
 type Address = {
   id: number;
