@@ -322,7 +322,7 @@ router.post("/", async (req, res) => {
     res.json({
       success: true,
       message:
-        "Product added to cart",
+        "Product successfully added to cart",
     });
 
   } catch (error) {
