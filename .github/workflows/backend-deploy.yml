@@ -26,6 +26,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Temporary diagnostic step to identify the OIDC subject
+      - name: Debug GitHub OIDC claims
+        shell: bash
+        run: |
+          TOKEN_RESPONSE=$(curl -fsS \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+
+          TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.value')
+
+          printf '%s' "$TOKEN" | cut -d '.' -f2 | \
+            python3 -c '
+          import sys, json, base64
+          s = sys.stdin.read()
+          s += "=" * (-len(s) % 4)
+          data = json.loads(base64.urlsafe_b64decode(s))
+          print(json.dumps({k: data.get(k) for k in
+            ["iss", "aud", "sub", "repository", "repository_id",
+             "repository_owner", "repository_owner_id", "ref"]}, indent=2))
+          '
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
